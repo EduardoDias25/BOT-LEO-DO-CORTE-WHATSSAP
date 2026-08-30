@@ -175,7 +175,18 @@ client.on('message', async (message) => {
     const etapaAtual = sessoes[chatId].etapa;
 
     if (etapaAtual === 'inicio') {
-        if (['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite'].includes(texto)) {
+        const saudacoes = [
+            'oi', 'oii', 'oiii', 'oie', 'olá', 'ola', 
+            'bom dia', 'boa tarde', 'boa noite', 'bom diaa', 'boa tardee', 'boa noitee',
+            'tudo bem', 'tudo bom', 'tudo joia', 'bão', 'bao', 'bão?', 'aoba', 'aoooba',
+            'kl', 'cole', 'colé', 'coé', 'coe', 'qualé', 'quale', 'qual foi', 'qual q e', 'qual que é',
+            'eai', 'eaí', 'e aí', 'iai', 'iaí', 'eae', 'eaee', 'opa', 'opaa', 'salve', 'salve salve',
+            'fala', 'fala ai', 'fala aí', 'fala tu', 'fala mestre', 'fala chefe', 
+            'fala patrão', 'fala patrao', 'fala mano', 'fala meu querido', 
+            'fala cria', 'fala zé', 'fala ze'
+        ];
+
+        if (saudacoes.some(saudacao => texto.startsWith(saudacao) || texto === saudacao)) {
             sessoes[chatId].etapa = 'menu';
             await enviarMenu(message, nomeCliente);
         }
