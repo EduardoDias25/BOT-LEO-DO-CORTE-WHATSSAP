@@ -3,7 +3,7 @@ const os = require('os');
 const sqlite3 = require('sqlite3').verbose();
 const cron = require('node-cron');
 
-const NUMERO_SALAO = '553175415627'; 
+const NUMERO_SALAO = '5531999999999'; 
 const NUMERO_ADMIN = '5531888888888@c.us'; 
 
 const db = new sqlite3.Database('./agendamentos.db');
@@ -79,7 +79,7 @@ function calcularDiferencaDias(dataAgendada) {
 }
 
 client.on('ready', () => {
-    console.log('🔴🔵 Bot do Leo Do Corte rodando com Cron e Admin ativos!');
+    console.log('🔴🔵 Bot do Leo Do Corte rodando com NLP, Cron e Admin ativos!');
 
     cron.schedule('0 8 * * *', () => {
         db.all("SELECT id, telefone, nome, data_hora, data_iso FROM agendamentos", [], async (err, rows) => {
@@ -148,101 +148,142 @@ client.on('message', async (message) => {
     }
 
     const contato = await message.getContact();
-    const nomeCliente = contato.pushname || 'Amigo(a)';
+    const nomePushname = contato.pushname; // Pode vir nulo se a pessoa tiver privacidade ativada
 
+    // Verifica comandos globais primeiro
     if (texto === 'parar' || texto === 'reiniciar') {
-        sessoes[chatId] = { etapa: 'menu' };
-        await message.reply('🔴 Operação reiniciada.\n\nDigite *Oi* para ver o menu novamente.');
+        sessoes[chatId] = { etapa: 'inicio' };
+        await message.reply('🔴 Atendimento encerrado.\n\nDigite *Oi* se precisar de mais alguma coisa.');
         return;
     }
 
-    if (texto === 'voltar' && sessoes[chatId] && sessoes[chatId].etapa !== 'menu') {
+    if (texto === 'voltar' && sessoes[chatId] && sessoes[chatId].etapa !== 'inicio') {
         sessoes[chatId].etapa = 'menu';
-        await enviarMenu(message, nomeCliente);
+        await enviarMenu(message, sessoes[chatId].nome || nomePushname);
         return;
     }
 
     if (texto === 'reagendar') {
-        sessoes[chatId] = { etapa: 'escolhendo_horario' };
+        if (!sessoes[chatId] || !sessoes[chatId].nome) {
+            sessoes[chatId] = { etapa: 'escolhendo_horario', nome: nomePushname || 'Cliente' };
+        } else {
+            sessoes[chatId].etapa = 'escolhendo_horario';
+        }
         await message.reply('🔵 Certo, vamos reagendar! Digite a nova data e horário (Ex: 26 de março as 15 ou 25/10/2026 15:00):');
         return;
     }
 
+    // Cria sessão se não existir
     if (!sessoes[chatId]) {
-        sessoes[chatId] = { etapa: 'inicio' };
+        sessoes[chatId] = { etapa: 'inicio', nome: nomePushname };
     }
 
     const etapaAtual = sessoes[chatId].etapa;
 
     if (etapaAtual === 'inicio') {
         const saudacoes = [
-            'oi', 'oii', 'oiii', 'oie', 'olá', 'ola', 
-            'bom dia', 'boa tarde', 'boa noite', 'bom diaa', 'boa tardee', 'boa noitee',
-            'tudo bem', 'tudo bom', 'tudo joia', 'bão', 'bao', 'bão?', 'aoba', 'aoooba',
-            'kl', 'cole', 'colé', 'coé', 'coe', 'qualé', 'quale', 'qual foi', 'qual q e', 'qual que é',
-            'eai', 'eaí', 'e aí', 'iai', 'iaí', 'eae', 'eaee', 'opa', 'opaa', 'salve', 'salve salve',
-            'fala', 'fala ai', 'fala aí', 'fala tu', 'fala mestre', 'fala chefe', 
-            'fala patrão', 'fala patrao', 'fala mano', 'fala meu querido', 
-            'fala cria', 'fala zé', 'fala ze'
+            'oi', 'oii', 'oiii', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite',
+            'bão', 'bao', 'bão?', 'aoba', 'aoooba', 'kl', 'cole', 'colé', 'coé', 'coe', 'qualé',
+            'qual foi', 'qual q e', 'eai', 'eaí', 'e aí', 'iai', 'iaí', 'eae', 'opa', 'salve',
+            'fala', 'fala tu', 'fala mestre', 'fala chefe', 'fala patrão', 'fala patrao', 
+            'fala mano', 'fala meu querido', 'fala cria', 'fala zé', 'manda a braba', 
+            'qual a boa', 'meu rei', 'consagrado', 'truta'
         ];
 
-        if (saudacoes.some(saudacao => texto.startsWith(saudacao) || texto === saudacao)) {
-            sessoes[chatId].etapa = 'menu';
-            await enviarMenu(message, nomeCliente);
+        // Gatilhos de intenção (já entende que o cliente quer algo sem precisar dar "oi")
+        const querAgendar = texto.includes('agendar') || texto.includes('marcar') || texto.includes('horário') || texto.includes('horario') || texto.includes('cortar') || texto.includes('corte');
+
+        if (saudacoes.some(saudacao => texto.startsWith(saudacao) || texto === saudacao) || querAgendar) {
+            
+            // SE O WHATSAPP ESCONDEU O NOME DA PESSOA:
+            if (!sessoes[chatId].nome) {
+                sessoes[chatId].etapa = 'capturando_nome';
+                await message.reply('🔴 Bem-vindo ao *Leo Do Corte* 🔵\n\nComo o seu nome não aparece aqui no meu sistema, como posso te chamar?');
+                return;
+            } else {
+                sessoes[chatId].etapa = 'menu';
+                await enviarMenu(message, sessoes[chatId].nome);
+                return;
+            }
         }
     } 
+    else if (etapaAtual === 'capturando_nome') {
+        // Salva o nome que a pessoa digitou e vai pro menu
+        sessoes[chatId].nome = message.body; 
+        sessoes[chatId].etapa = 'menu';
+        await enviarMenu(message, sessoes[chatId].nome);
+    }
     else if (etapaAtual === 'menu') {
-        switch (texto) {
-            case '1':
-                sessoes[chatId].etapa = 'escolhendo_horario';
-                await message.reply(
-                    `🔴 *AGENDAMENTO* 🔵\n\n` +
-                    `Nosso horário de funcionamento:\n` +
-                    `💈 Terça a Quinta: 9h às 17h\n` +
-                    `💈 Sexta: 8h às 19h\n` +
-                    `💈 Sábado: 9h às 18h\n\n` +
-                    `⚠️ *Atenção:* Fechamos para o almoço das *12h às 13h*.\n\n` +
-                    `Para o sistema registrar, digite a data e o horário (Ex: *26 de março as 15* ou *25/10/2026 15:00*):`
-                );
-                break;
-            case '2':
-                await message.reply(
-                    `🔴 *TABELA DE PREÇOS* 🔵\n\n` +
-                    `✂️ *Corte:* R$ 35\n` +
-                    `🧔 *Barba:* R$ 30\n` +
-                    `📏 *Pé acabamento:* R$ 15\n` +
-                    `👁️ *Sobrancelha:* R$ 18\n\n` +
-                    `🔥 *COMBO* (Corte, Limpa Rosto, Sobrancelha, Bigode): R$ 68\n\n` +
-                    `🧪 *Química / Cor:*\n` +
-                    `• Alisamento: R$ 35\n` +
-                    `• Luzes: R$ 60\n` +
-                    `• Pigmentação Preto: R$ 35\n` +
-                    `• Pigmentação Color: R$ 120\n\n` +
-                    `🧴 *Produtos:*\n` +
-                    `• Gel Boy: R$ 35\n` +
-                    `• Gel Mega Fix: R$ 20\n` +
-                    `• Pomada: R$ 40\n\n` +
-                    `_(Digite *voltar* para retornar ao menu)_`
-                );
-                break;
-            case '3':
-                await message.reply(
-                    `📍 *Nossa Localização*\n\n` +
-                    `R. Junquilhas, 184 - Alterosa 2ª Seção\n` +
-                    `Betim - MG, 32673-202\n\n` +
-                    `Telefone: (31) 97352-4465\n\n` +
-                    `_(Digite *voltar* para retornar ao menu)_`
-                );
-                break;
-            case '4':
-                await message.reply(
-                    `📸 *Nosso Instagram*\n\n` +
-                    `👉 https://www.instagram.com/leoducorteofc_01/\n\n` +
-                    `_(Digite *voltar* para retornar ao menu)_`
-                );
-                break;
-            default:
-                await message.reply('❌ Opção inválida. Por favor, digite um número de 1 a 4.');
+        // Respostas Diretas de Horário e Localização
+        if (texto.includes('horario') || texto.includes('funcionamento') || texto.includes('abrem') || texto.includes('fecham')) {
+            await message.reply(`🕒 *Nosso Horário de Funcionamento:*\n💈 Terça a Quinta: 9h às 17h\n💈 Sexta: 8h às 19h\n💈 Sábado: 9h às 18h\n\n⚠️ Fechamos para almoço das *12h às 13h*.\n\n_(Digite *1* se quiser agendar um horário)_`);
+            return;
+        }
+        else if (texto.includes('local') || texto.includes('endereço') || texto.includes('endereco') || texto.includes('onde fica')) {
+            await message.reply(`📍 *Nossa Localização*\n\nR. Junquilhas, 184 - Alterosa 2ª Seção\nBetim - MG, 32673-202\n\n_(Digite *voltar* para o menu principal)_`);
+            return;
+        }
+        
+        // Respostas Diretas de Serviços Específicos
+        else if (texto.includes('corte') && (texto.includes('valor') || texto.includes('preço') || texto.includes('preco') || texto.includes('quanto'))) {
+            await message.reply(`✂️ O valor do *Corte* é R$ 35.\n\n_(Digite *1* se quiser agendar)_`);
+            return;
+        }
+        else if (texto.includes('barba') && (texto.includes('valor') || texto.includes('preço') || texto.includes('preco') || texto.includes('quanto'))) {
+            await message.reply(`🧔 Fazer a *Barba* sai por R$ 30.\n\n_(Digite *1* se quiser agendar)_`);
+            return;
+        }
+        else if (texto.includes('combo')) {
+            await message.reply(`🔥 Nosso *COMBO* (Corte, Limpa Rosto, Sobrancelha, Bigode) está saindo por R$ 68.\n\n_(Digite *1* se quiser agendar)_`);
+            return;
+        }
+        else if (texto.includes('luzes') || texto.includes('platinar') || texto.includes('quimica') || texto.includes('química') || texto.includes('pigmentação')) {
+            await message.reply(`🧪 *Química / Cor:*\n• Alisamento: R$ 35\n• Luzes: R$ 60\n• Pigmentação Preto: R$ 35\n• Pigmentação Color: R$ 120\n\n_(Digite *1* se quiser agendar)_`);
+            return;
+        }
+        else if (texto.includes('sobrancelha')) {
+            await message.reply(`👁️ A *Sobrancelha* sai por R$ 18.\n\n_(Digite *1* se quiser agendar)_`);
+            return;
+        }
+
+        // Navegação Padrão do Menu Numérico
+        if (texto === '1' || texto === 'agendar' || texto === 'marcar') {
+            sessoes[chatId].etapa = 'escolhendo_horario';
+            await message.reply(
+                `🔴 *AGENDAMENTO* 🔵\n\n` +
+                `Lembrando que funcionamos de 9h às 17h (Sexta até 19h e Sábado até 18h).\n` +
+                `⚠️ Fechamos para o almoço das *12h às 13h*.\n\n` +
+                `Para o sistema registrar, digite a data e o horário (Ex: *26 de março as 15* ou *25/10/2026 15:00*):`
+            );
+        }
+        else if (texto === '2' || texto === 'tabela' || texto === 'preços') {
+            await message.reply(
+                `🔴 *TABELA DE PREÇOS COMPLETA* 🔵\n\n` +
+                `✂️ *Corte:* R$ 35\n` +
+                `🧔 *Barba:* R$ 30\n` +
+                `📏 *Pé acabamento:* R$ 15\n` +
+                `👁️ *Sobrancelha:* R$ 18\n\n` +
+                `🔥 *COMBO* (Corte, Limpa Rosto, Sobrancelha, Bigode): R$ 68\n\n` +
+                `🧪 *Química / Cor:*\n` +
+                `• Alisamento: R$ 35\n` +
+                `• Luzes: R$ 60\n` +
+                `• Pigmentação Preto: R$ 35\n` +
+                `• Pigmentação Color: R$ 120\n\n` +
+                `🧴 *Produtos:*\n` +
+                `• Gel Boy: R$ 35\n` +
+                `• Gel Mega Fix: R$ 20\n` +
+                `• Pomada: R$ 40\n\n` +
+                `_(Dúvidas sobre algo? É só perguntar. Para agendar, digite *1*)_`
+            );
+        }
+        else if (texto === '3') {
+            await message.reply(`📍 R. Junquilhas, 184 - Alterosa 2ª Seção\nBetim - MG, 32673-202\n\n_(Digite *voltar* para retornar)_`);
+        }
+        else if (texto === '4' || texto.includes('insta')) {
+            await message.reply(`📸 Nosso Instagram:\n👉 https://www.instagram.com/leoducorteofc_01/\n\n_(Digite *voltar* para retornar)_`);
+        }
+        else {
+            await message.reply('❌ Opção não encontrada. Digite um número de 1 a 4 ou pergunte sobre um serviço específico (ex: "valor do corte").');
         }
     }
     else if (etapaAtual === 'escolhendo_horario') {
@@ -258,13 +299,13 @@ client.on('message', async (message) => {
         }
 
         db.run(`INSERT INTO agendamentos (telefone, nome, data_hora, data_iso) VALUES (?, ?, ?, ?)`, 
-        [chatId, nomeCliente, message.body, dataValidada.toISOString()], async (err) => {
+        [chatId, sessoes[chatId].nome, message.body, dataValidada.toISOString()], async (err) => {
             if (err) {
-                await message.reply('❌ Ocorreu um erro. Tente novamente.');
+                await message.reply('❌ Ocorreu um erro ao salvar no banco de dados. Tente novamente.');
                 return;
             }
             sessoes[chatId].etapa = 'menu';
-            await message.reply(`✅ *${nomeCliente}*, seu agendamento para *${message.body}* foi salvo no sistema!\n\nVocê receberá lembretes automáticos conforme a data se aproxima.\n\n_(Para remarcar, digite *reagendar*. Para voltar ao início, digite *voltar*)_`);
+            await message.reply(`✅ *${sessoes[chatId].nome}*, seu agendamento para *${message.body}* foi salvo no sistema!\n\nVocê receberá lembretes automáticos conforme a data se aproxima.\n\n_(Para remarcar, digite *reagendar*. Para sair, digite *parar*)_`);
         });
     }
 });
@@ -272,12 +313,12 @@ client.on('message', async (message) => {
 async function enviarMenu(message, nome) {
     await message.reply(
         `🔴 Bem-vindo ao *Leo Do Corte* 🔵\n` +
-        `Olá, ${nome}! Como podemos te ajudar hoje?\n\n` +
+        `Olá, ${nome}! Como posso te ajudar hoje?\n\n` +
         `*1* 📅 - Marcar Horário\n` +
         `*2* 💰 - Ver Tabela de Preços\n` +
         `*3* 📍 - Nossa Localização\n` +
         `*4* 📸 - Nosso Instagram\n\n` +
-        `_Dica: Digite *voltar* ou *parar* a qualquer momento._`
+        `_Dica: Você também pode me perguntar direto, tipo "qual o valor do corte?" ou "que horas vcs abrem?"._`
     );
 }
 
