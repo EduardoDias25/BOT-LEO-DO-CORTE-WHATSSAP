@@ -6,12 +6,11 @@ const cron = require('node-cron');
 // Configurações do Sistema
 const NUMERO_SALAO = '5531999999999'; // Tente com e sem o 9 para a Discloud
 const NUMERO_ADMIN = '179778875347010@lid'; 
-const CHAVE_PIX = '31999999999'; // Substitua pela chave real
+const CHAVE_PIX = '31999999999'; // Substitua pela sua chave Pix
 const NOME_PIX = 'Leonardo - Leo Do Corte';
 
 const db = new sqlite3.Database('./agendamentos.db');
 
-// Nova estrutura de banco de dados suportando Duração e Serviços
 db.run(`CREATE TABLE IF NOT EXISTS agendamentos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     telefone TEXT,
@@ -83,7 +82,6 @@ function converterData(texto) {
     }
 
     if (dataCalculada) {
-        // Arredondamento inteligente de 30 em 30 minutos
         let minutos = dataCalculada.getMinutes();
         if (minutos < 15) minutos = 0;
         else if (minutos < 45) minutos = 30;
@@ -105,15 +103,15 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
         `;
         db.get(query, [novaDataFimIso, novaDataIso, novaDataIso, novaDataFimIso], (err, row) => {
             if (err) reject(err);
-            resolve(row ? false : true); // Retorna false se achar conflito
+            resolve(row ? false : true);
         });
     });
 }
 
 client.on('ready', () => {
-    console.log('🔴🔵 Sistema J.A.R.V.I.S. online. Leo Do Corte operando com proteção Anti-Duplicidade.');
+    console.log('🔴🔵 Sistema J.A.R.V.I.S. online com Trava de Nome Real e Anti-Duplicidade.');
 
-    // Faxina Autônoma: Roda todo dia à meia-noite (00:00)
+    // Faxina Autônoma à meia-noite
     cron.schedule('0 0 * * *', () => {
         const agora = new Date().toISOString();
         db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agora], function(err) {
@@ -179,15 +177,15 @@ client.on('message', async (message) => {
         }
         if (texto === '!limpar') {
             const agora = new Date().toISOString();
-            db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agora], async function(err) {
-                await message.reply(`🧹 *Limpeza manual concluída!*\n${this.changes} agendamentos passados foram removidos.`);
+            db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agora], function(err) {
+                message.reply(`🧹 *Limpeza manual concluída!*\n${this.changes} agendamentos passados foram removidos.`);
             });
             return;
         }
         if (texto.startsWith('!apagar ')) {
             const id = texto.split(' ')[1];
-            db.run(`DELETE FROM agendamentos WHERE id = ?`, [id], async function(err) {
-                await message.reply(`✅ Agendamento ID ${id} cancelado pelo sistema.`);
+            db.run(`DELETE FROM agendamentos WHERE id = ?`, [id], function(err) {
+                message.reply(`✅ Agendamento ID ${id} cancelado pelo sistema.`);
             });
             return;
         }
@@ -202,7 +200,7 @@ client.on('message', async (message) => {
         return;
     }
 
-    // CANCELAMENTO AUTÔNOMO (Gírias ou Direto)
+    // CANCELAMENTO AUTÔNOMO
     const intencaoCancelar = texto.includes('cancelar') || texto.includes('desmarcar') || texto.includes('deu ruim') || texto.includes('não vou conseguir') || texto.includes('nao vou poder') || texto === '5';
     if (intencaoCancelar) {
         db.all(`SELECT id, data_hora FROM agendamentos WHERE telefone = ?`, [chatId], async (err, rows) => {
@@ -212,9 +210,9 @@ client.on('message', async (message) => {
             }
             db.run(`DELETE FROM agendamentos WHERE telefone = ?`, [chatId], async function(err) {
                 await message.reply('🗑️ *Horário Cancelado!*\n\nSua reserva foi removida do nosso sistema. Estaremos te esperando na próxima vez. Digite *Oi* se quiser marcar uma nova data.');
-                sessoes[chatId] = null;
+                if (sessoes[chatId]) sessoes[chatId].etapa = 'inicio';
                 try {
-                    await client.sendMessage(NUMERO_ADMIN, `⚠️ *DESISTÊNCIA AUTÔNOMA*\n\nO cliente *${nomePushname}* (${chatId.replace('@c.us', '')}) acabou de desmarcar o horário pelo bot. Vaga liberada na grade!`);
+                    await client.sendMessage(NUMERO_ADMIN, `⚠️ *DESISTÊNCIA AUTÔNOMA*\n\nO cliente desmarcou o horário pelo bot. Vaga liberada na grade!`);
                 } catch (e) {}
             });
         });
@@ -229,32 +227,57 @@ client.on('message', async (message) => {
 
     if (texto === 'voltar' && sessoes[chatId] && sessoes[chatId].etapa !== 'inicio') {
         sessoes[chatId].etapa = 'menu';
-        await enviarMenu(message, sessoes[chatId].nome || nomePushname);
+        await enviarMenu(message, sessoes[chatId].nome);
         return;
     }
 
-    if (!sessoes[chatId]) sessoes[chatId] = { etapa: 'inicio', nome: nomePushname };
+    if (!sessoes[chatId]) sessoes[chatId] = { etapa: 'inicio' };
     const etapaAtual = sessoes[chatId].etapa;
+
+    // ETAPA 1: CAPTURA E TRAVA DE NOME REAL
+    if (etapaAtual === 'capturando_nome') {
+        // Validação simples para evitar que mandem símbolos ou textos vazios
+        if (message.body.trim().length < 2) {
+            await message.reply('⚠️ Por favor, digite o seu **nome real** para continuarmos o atendimento:');
+            return;
+        }
+        sessoes[chatId].nome = message.body.trim();
+        sessoes[chatId].etapa = 'menu';
+        await enviarMenu(message, sessoes[chatId].nome);
+        return;
+    }
 
     if (etapaAtual === 'inicio') {
         const saudacoes = ['oi', 'oii', 'oiii', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'bão', 'bao', 'aoba', 'cole', 'coé', 'coe', 'qualé', 'qual foi', 'eai', 'eaí', 'iai', 'eae', 'opa', 'salve', 'fala'];
         const querAgendar = texto.includes('agendar') || texto.includes('marcar') || texto.includes('horário') || texto.includes('cortar') || texto.includes('corte');
 
         if (saudacoes.some(saudacao => texto.startsWith(saudacao) || texto === saudacao) || querAgendar) {
-            if (!sessoes[chatId].nome) {
-                sessoes[chatId].etapa = 'capturando_nome';
-                await message.reply('🔴 Bem-vindo ao *Leo Do Corte* 🔵\n\nComo o seu nome não aparece aqui no meu sistema, como posso te chamar?');
-            } else {
+            
+            // Verifica se já tem nome na sessão atual
+            if (sessoes[chatId].nome) {
                 sessoes[chatId].etapa = 'menu';
                 await enviarMenu(message, sessoes[chatId].nome);
+                return;
             }
+
+            // Memória Permanente: Busca nome anterior no Banco de Dados
+            db.get(`SELECT nome FROM agendamentos WHERE telefone = ? ORDER BY id DESC LIMIT 1`, [chatId], async (err, row) => {
+                if (row && row.nome) {
+                    sessoes[chatId].nome = row.nome;
+                    sessoes[chatId].etapa = 'menu';
+                    await enviarMenu(message, sessoes[chatId].nome);
+                } else {
+                    // FORÇA A OBRIGATORIEDADE DO NOME REAL
+                    sessoes[chatId].etapa = 'capturando_nome';
+                    await message.reply(
+                        '🔴 Bem-vindo ao *Leo Do Corte* 🔵\n\n' +
+                        '⚠️ Para garantir um atendimento organizado, preciso do seu **nome real** (já que muitos perfis do WhatsApp usam apelidos ou nomes ocultos).\n\n' +
+                        '✍️ Por favor, digite o seu nome:'
+                    );
+                }
+            });
         }
     } 
-    else if (etapaAtual === 'capturando_nome') {
-        sessoes[chatId].nome = message.body; 
-        sessoes[chatId].etapa = 'menu';
-        await enviarMenu(message, sessoes[chatId].nome);
-    }
     else if (etapaAtual === 'menu') {
         if (texto.includes('local') || texto.includes('endereço') || texto.includes('onde fica')) {
             await message.reply(`📍 *Nossa Localização*\n\nR. Junquilhas, 184 - Alterosa 2ª Seção\nBetim - MG, 32673-202\n\n🗺️ *Abra direto no GPS/Uber:*\nhttps://www.google.com/maps/search/?api=1&query=R.+Junquilhas,+184+-+Alterosa+2ª+Seção,+Betim+-+MG\n\n_(Digite *voltar* para o menu)_`);
@@ -273,7 +296,7 @@ client.on('message', async (message) => {
             );
         }
         else if (texto === '2' || texto === 'tabela') {
-            await message.reply(`🔴 *TABELA DE PREÇOS* 🔵\n\n✂️ *Corte:* R$ 35\n🧔 *Barba:* R$ 30\n📏 *Pé acabamento:* R$ 15\n👁️ *Sobrancelha:* R$ 18\n🔥 *COMBO* (Corte+Limpa+Sobrancelha+Bigode): R$ 68\n\n🧪 *Química / Cor:*\n• Alisamento: R$ 35\n• Luzes: R$ 60\n• Pigment Preto: R$ 35\n• Pigment Color: R$ 120\n\n_(Para agendar, digite *1*)_`);
+            await message.reply(`🔴 *TABELA DE PREÇOS* 🔵\n\n✂️ *Corte:* R$ 35\n🧔 *Barba:* R$ 30\n📏 *Pé acabamento:* R$ 15\n👁️ *Sobrancelha:* R$ 18\n🔥 *COMBO:* R$ 68\n\n🧪 *Química / Cor:*\n• Alisamento: R$ 35\n• Luzes: R$ 60\n• Pigment Preto: R$ 35\n• Pigment Color: R$ 120\n\n_(Para agendar, digite *1*)_`);
         }
         else if (texto === '3') {
             await message.reply(`📍 R. Junquilhas, 184 - Alterosa 2ª Seção\nBetim - MG\n\n🗺️ *GPS:* https://www.google.com/maps/search/?api=1&query=R.+Junquilhas,+184+-+Alterosa+2ª+Seção,+Betim+-+MG\n\n_(Digite *voltar* para retornar)_`);
@@ -315,9 +338,9 @@ client.on('message', async (message) => {
 
         // Cálculo Dinâmico de Tempo
         const duracao = sessoes[chatId].servicoSelecionado.duracao;
-        const dataFim = new Date(dataValidada.getTime() + duracao * 60000); // Adiciona minutos
+        const dataFim = new Date(dataValidada.getTime() + duracao * 60000);
 
-        // TRAVA DE DUPLICIDADE: Consulta ao Banco de Dados
+        // TRAVA DE DUPLICIDADE
         const livre = await verificarDisponibilidade(dataValidada.toISOString(), dataFim.toISOString());
         
         if (!livre) {
