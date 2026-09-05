@@ -346,7 +346,7 @@ client.on('message', async (message) => {
                     await enviarMenu(message, sessoes[chatId].nome);
                 } else {
                     sessoes[chatId].etapa = 'capturando_nome';
-                    await message.reply('Olá! Seja bem-vindo ao *Leo Do Corte* 💈\n\nPara começarmos, qual é o seu nome?');
+                    await message.reply('Olá! Seja bem-vindo ao *Leo Do Corte* 💈\🔴🔵\n\nPara começarmos, qual é o seu nome?');
                 }
             });
         }
