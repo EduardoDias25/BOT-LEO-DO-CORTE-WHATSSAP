@@ -4,9 +4,9 @@ const sqlite3 = require('sqlite3').verbose();
 const cron = require('node-cron');
 
 // Configurações do Sistema
-const NUMERO_SALAO = '553175415627'; // Tente com e sem o 9 para a Discloud
+const NUMERO_SALAO = '553175415627'; 
 const NUMERO_ADMIN = '179778875347010@lid'; 
-const CHAVE_PIX = '31999999999'; // Substitua pela sua chave Pix
+const CHAVE_PIX = '31999999999'; 
 const NOME_PIX = 'Leonardo - Leo Do Corte';
 
 const db = new sqlite3.Database('./agendamentos.db');
@@ -109,9 +109,8 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
 }
 
 client.on('ready', () => {
-    console.log('🔴🔵 Sistema J.A.R.V.I.S. online com Trava de Nome Real e Anti-Duplicidade.');
+    console.log('🔴🔵 Sistema J.A.R.V.I.S. online com extração inteligente de contato.');
 
-    // Faxina Autônoma à meia-noite
     cron.schedule('0 0 * * *', () => {
         const agora = new Date().toISOString();
         db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agora], function(err) {
@@ -119,7 +118,6 @@ client.on('ready', () => {
         });
     });
 
-    // Lembretes matinais às 08:00
     cron.schedule('0 8 * * *', () => {
         db.all("SELECT telefone, nome, data_hora, data_iso FROM agendamentos", [], async (err, rows) => {
             if (err) return;
@@ -189,18 +187,102 @@ client.on('message', async (message) => {
             });
             return;
         }
+        if (texto.startsWith('!reagendar ')) {
+            const partes = message.body.split(' ');
+            const id = partes[1];
+            const novoTextoData = partes.slice(2).join(' ');
+
+            if (!id || !novoTextoData) {
+                await message.reply('⚠️ Formato incorreto. Use: *!reagendar [ID] [Nova Data]*');
+                return;
+            }
+
+            db.get(`SELECT * FROM agendamentos WHERE id = ?`, [id], async (err, row) => {
+                if (err || !row) return await message.reply(`❌ Agendamento ID ${id} não encontrado.`);
+
+                const novaDataValidada = converterData(novoTextoData);
+                if (!novaDataValidada) return await message.reply('⚠️ Não entendi a nova data. Tente "amanha as 10" ou "26 as 14".');
+                if (novaDataValidada.getHours() === 12) return await message.reply('⛔ Horário de almoço (12h) inválido.');
+
+                let duracaoMinutos = 30;
+                if (row.servico.includes('Combo') || row.servico.includes('COMBO')) duracaoMinutos = 60;
+                if (row.servico.includes('Química') || row.servico.includes('Platinado')) duracaoMinutos = 120;
+
+                const novaDataFim = new Date(novaDataValidada.getTime() + duracaoMinutos * 60000);
+                const livre = await verificarDisponibilidade(novaDataValidada.toISOString(), novaDataFim.toISOString());
+                if (!livre) return await message.reply('⏳ Conflito de horário! Já existe agendamento nessa faixa.');
+
+                const horaFormatada = `${novaDataValidada.getHours()}h${novaDataValidada.getMinutes()===0?'00':novaDataValidada.getMinutes()}`;
+                const novaDataString = `${novaDataValidada.getDate()}/${novaDataValidada.getMonth()+1} às ${horaFormatada}`;
+
+                db.run(`UPDATE agendamentos SET data_hora = ?, data_iso = ?, data_fim_iso = ? WHERE id = ?`, 
+                [novaDataString, novaDataValidada.toISOString(), novaDataFim.toISOString(), id], async (err) => {
+                    if (err) return await message.reply('❌ Erro ao atualizar.');
+                    await message.reply(`✅ Agendamento ID ${id} reagendado para *${novaDataString}*.`);
+                    try {
+                        await client.sendMessage(row.telefone, `🔔 *Leo Do Corte*\nSeu horário foi alterado para: *${novaDataString}* (${row.servico}).`);
+                    } catch (e) {}
+                });
+            });
+            return;
+        }
+
+        if (texto.startsWith('!adicionar ')) {
+            const conteudo = message.body.replace('!adicionar', '').trim();
+            const partes = conteudo.split('|').map(p => p.trim());
+
+            if (partes.length < 3) {
+                await message.reply('⚠️ Formato inválido.\nUse: *!adicionar Nome | Número do Serviço (1-4) | Data*\nExemplo: `!adicionar Carlos | 1 | amanha as 15`');
+                return;
+            }
+
+            const nomeCliente = partes[0];
+            const numServico = partes[1];
+            const textoData = partes.slice(2).join(' ');
+
+            if (!SERVICOS[numServico]) {
+                await message.reply('❌ Número do serviço inválido. Escolha de 1 a 4:\n1-Corte, 2-Barba, 3-Combo, 4-Química');
+                return;
+            }
+
+            const servicoObj = SERVICOS[numServico];
+            const dataValidada = converterData(textoData);
+
+            if (!dataValidada) {
+                await message.reply('⚠️ Não entendi a data. Tente algo como "hoje as 15" ou "25 as 16 e 30".');
+                return;
+            }
+
+            if (dataValidada.getHours() === 12) {
+                await message.reply('⛔ Horário de almoço (12h) inválido.');
+                return;
+            }
+
+            const dataFim = new Date(dataValidada.getTime() + servicoObj.duracao * 60000);
+            const livre = await verificarDisponibilidade(dataValidada.toISOString(), dataFim.toISOString());
+
+            if (!livre) {
+                await message.reply('⏳ Conflito de horário! Já existe um atendimento nessa faixa.');
+                return;
+            }
+
+            const horaFormatada = `${dataValidada.getHours()}h${dataValidada.getMinutes()===0?'00':dataValidada.getMinutes()}`;
+            const dataString = `${dataValidada.getDate()}/${dataValidada.getMonth()+1} às ${horaFormatada}`;
+
+            db.run(`INSERT INTO agendamentos (telefone, nome, servico, data_hora, data_iso, data_fim_iso) VALUES (?, ?, ?, ?, ?, ?)`, 
+            ['manual_admin', nomeCliente, servicoObj.nome, dataString, dataValidada.toISOString(), dataFim.toISOString()], async (err) => {
+                if (err) return await message.reply('❌ Erro ao salvar agendamento manual.');
+                await message.reply(`✅ *Agendamento Manual Criado!*\n\n👤 Cliente: ${nomeCliente}\n✂️ Serviço: ${servicoObj.nome}\n📅 Data: ${dataString}`);
+            });
+            return;
+        }
     }
 
-    const contato = await message.getContact();
-    const nomePushname = contato.pushname; 
-
-    // GATILHO DE PAGAMENTO RÁPIDO
     if (texto === 'pix' || texto === 'pagar' || texto === 'pagamento') {
         await message.reply(`💸 *Área de Pagamento*\n\nNossa Chave Pix (Celular):\n*${CHAVE_PIX}*\nNome: ${NOME_PIX}\n\nObrigado pela preferência!`);
         return;
     }
 
-    // CANCELAMENTO AUTÔNOMO
     const intencaoCancelar = texto.includes('cancelar') || texto.includes('desmarcar') || texto.includes('deu ruim') || texto.includes('não vou conseguir') || texto.includes('nao vou poder') || texto === '5';
     if (intencaoCancelar) {
         db.all(`SELECT id, data_hora FROM agendamentos WHERE telefone = ?`, [chatId], async (err, rows) => {
@@ -234,11 +316,9 @@ client.on('message', async (message) => {
     if (!sessoes[chatId]) sessoes[chatId] = { etapa: 'inicio' };
     const etapaAtual = sessoes[chatId].etapa;
 
-    // ETAPA 1: CAPTURA E TRAVA DE NOME REAL
     if (etapaAtual === 'capturando_nome') {
-        // Validação simples para evitar que mandem símbolos ou textos vazios
         if (message.body.trim().length < 2) {
-            await message.reply('⚠️ Por favor, digite o seu **nome real** para continuarmos o atendimento:');
+            await message.reply('⚠️ Por favor, digite seu nome para continuarmos:');
             return;
         }
         sessoes[chatId].nome = message.body.trim();
@@ -253,27 +333,20 @@ client.on('message', async (message) => {
 
         if (saudacoes.some(saudacao => texto.startsWith(saudacao) || texto === saudacao) || querAgendar) {
             
-            // Verifica se já tem nome na sessão atual
             if (sessoes[chatId].nome) {
                 sessoes[chatId].etapa = 'menu';
                 await enviarMenu(message, sessoes[chatId].nome);
                 return;
             }
 
-            // Memória Permanente: Busca nome anterior no Banco de Dados
             db.get(`SELECT nome FROM agendamentos WHERE telefone = ? ORDER BY id DESC LIMIT 1`, [chatId], async (err, row) => {
                 if (row && row.nome) {
                     sessoes[chatId].nome = row.nome;
                     sessoes[chatId].etapa = 'menu';
                     await enviarMenu(message, sessoes[chatId].nome);
                 } else {
-                    // FORÇA A OBRIGATORIEDADE DO NOME REAL
                     sessoes[chatId].etapa = 'capturando_nome';
-                    await message.reply(
-                        '🔴 Bem-vindo ao *Leo Do Corte* 🔵\n\n' +
-                        '⚠️ Para garantir um atendimento organizado, preciso do seu **nome real** (já que muitos perfis do WhatsApp usam apelidos ou nomes ocultos).\n\n' +
-                        '✍️ Por favor, digite o seu nome:'
-                    );
+                    await message.reply('Olá! Seja bem-vindo ao *Leo Do Corte* 💈\n\nPara começarmos, qual é o seu nome?');
                 }
             });
         }
@@ -281,6 +354,19 @@ client.on('message', async (message) => {
     else if (etapaAtual === 'menu') {
         if (texto.includes('local') || texto.includes('endereço') || texto.includes('onde fica')) {
             await message.reply(`📍 *Nossa Localização*\n\nR. Junquilhas, 184 - Alterosa 2ª Seção\nBetim - MG, 32673-202\n\n🗺️ *Abra direto no GPS/Uber:*\nhttps://www.google.com/maps/search/?api=1&query=R.+Junquilhas,+184+-+Alterosa+2ª+Seção,+Betim+-+MG\n\n_(Digite *voltar* para o menu)_`);
+            return;
+        }
+
+        let servicoDireto = null;
+        if (texto.includes('corte') || texto.includes('cortar')) servicoDireto = SERVICOS['1'];
+        else if (texto.includes('barba')) servicoDireto = SERVICOS['2'];
+        else if (texto.includes('combo')) servicoDireto = SERVICOS['3'];
+        else if (texto.includes('química') || texto.includes('platinado') || texto.includes('quimica')) servicoDireto = SERVICOS['4'];
+
+        if (servicoDireto) {
+            sessoes[chatId].servicoSelecionado = servicoDireto;
+            sessoes[chatId].etapa = 'escolhendo_horario';
+            await message.reply(`Show! Escolheu *${servicoDireto.nome}* (${servicoDireto.preco}). 💈\n\nAgora digite a data e o horário desejado (Ex: *amanhã às 15h* ou *25 às 16:30*):`);
             return;
         }
 
@@ -314,10 +400,7 @@ client.on('message', async (message) => {
             sessoes[chatId].etapa = 'escolhendo_horario';
             await message.reply(
                 `Ótima escolha! 💈\n\n` +
-                `Agora digite a data e o horário. Nossa IA aceita formatos como:\n` +
-                `👉 *25 as 16 e 30*\n` +
-                `👉 *hoje as 15h*\n` +
-                `👉 *amanhã as 10*`
+                `Agora digite a data e o horário (Ex: *amanhã às 15h* ou *25 às 16:30*):`
             );
         } else {
             await message.reply('⚠️ Por favor, escolha um número de 1 a 4 para o serviço.');
@@ -330,17 +413,14 @@ client.on('message', async (message) => {
             return;
         }
 
-        // Validação de horário de almoço
         if (dataValidada.getHours() === 12) {
             await message.reply('⛔ Infelizmente as 12h é nosso horário de almoço. Por favor, escolha outro horário (ex: 11:30 ou 13:00).');
             return;
         }
 
-        // Cálculo Dinâmico de Tempo
         const duracao = sessoes[chatId].servicoSelecionado.duracao;
         const dataFim = new Date(dataValidada.getTime() + duracao * 60000);
 
-        // TRAVA DE DUPLICIDADE
         const livre = await verificarDisponibilidade(dataValidada.toISOString(), dataFim.toISOString());
         
         if (!livre) {
@@ -359,7 +439,11 @@ client.on('message', async (message) => {
             await message.reply(`✅ *Sucesso, ${sessoes[chatId].nome}!*\n\nSeu horário para *${sessoes[chatId].servicoSelecionado.nome}* está garantido para *${dataString}*.\n\nVocê receberá lembretes automáticos.\n_(Se precisar desmarcar depois, basta digitar *cancelar*)_`);
             
             try {
-                const avisoDono = `🔔 *NOVO AGENDAMENTO!*\n\n👤 *Cliente:* ${sessoes[chatId].nome}\n📞 *Contato:* ${chatId.replace('@c.us', '')}\n✂️ *Serviço:* ${sessoes[chatId].servicoSelecionado.nome}\n📅 *Data/Hora:* ${dataString}`;
+                // Tenta extrair o número de telefone real do contato
+                const contatoCliente = await message.getContact();
+                const numeroReal = contatoCliente.number ? `${contatoCliente.number}` : chatId.replace('@c.us', '').replace('@lid', '');
+
+                const avisoDono = `🔔 *NOVO AGENDAMENTO!*\n\n👤 *Cliente:* ${sessoes[chatId].nome}\n📞 *Contato:* ${numeroReal}\n✂️ *Serviço:* ${sessoes[chatId].servicoSelecionado.nome}\n📅 *Data/Hora:* ${dataString}`;
                 await client.sendMessage(NUMERO_ADMIN, avisoDono);
             } catch (e) {}
         });
