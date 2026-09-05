@@ -3,7 +3,7 @@ const os = require('os');
 const sqlite3 = require('sqlite3').verbose();
 const cron = require('node-cron');
 
-const NUMERO_SALAO = '5531999999999'; 
+const NUMERO_SALAO = '553175415627'; 
 const NUMERO_ADMIN = '5531888888888@c.us'; 
 
 const db = new sqlite3.Database('./agendamentos.db');
