@@ -1,10 +1,11 @@
+const qrcode = require('qrcode-terminal');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const os = require('os');
 const sqlite3 = require('sqlite3').verbose();
 const cron = require('node-cron');
 
-const NUMERO_SALAO = '553175415627'; 
-const NUMERO_ADMIN = '5531888888888@c.us'; 
+// ATENÇÃO: Coloque o seu número pessoal aqui para receber os avisos e usar comandos admin
+const NUMERO_ADMIN = '5531999999999@c.us'; 
 
 const db = new sqlite3.Database('./agendamentos.db');
 db.run(`CREATE TABLE IF NOT EXISTS agendamentos (
@@ -25,13 +26,10 @@ const client = new Client({
 
 const sessoes = {};
 
-client.on('qr', async () => {
-    try {
-        setTimeout(async () => {
-            const codigo = await client.requestPairingCode(NUMERO_SALAO);
-            console.log(`\n📲 CÓDIGO DE EMPARELHAMENTO: ${codigo}\n`);
-        }, 2000);
-    } catch (error) {}
+// Sistema de autenticação por QR Code no terminal
+client.on('qr', (qr) => {
+    qrcode.generate(qr, {small: true});
+    console.log('\n👆 ESCANEIE O QR CODE ACIMA COM O WHATSAPP DO SALÃO!\n');
 });
 
 function converterData(texto) {
@@ -79,7 +77,7 @@ function calcularDiferencaDias(dataAgendada) {
 }
 
 client.on('ready', () => {
-    console.log('🔴🔵 Bot do Leo Do Corte rodando com NLP, Cron e Admin ativos!');
+    console.log('🔴🔵 Bot do Leo Do Corte conectado e rodando 100%!');
 
     cron.schedule('0 8 * * *', () => {
         db.all("SELECT id, telefone, nome, data_hora, data_iso FROM agendamentos", [], async (err, rows) => {
@@ -148,9 +146,8 @@ client.on('message', async (message) => {
     }
 
     const contato = await message.getContact();
-    const nomePushname = contato.pushname; // Pode vir nulo se a pessoa tiver privacidade ativada
+    const nomePushname = contato.pushname; 
 
-    // Verifica comandos globais primeiro
     if (texto === 'parar' || texto === 'reiniciar') {
         sessoes[chatId] = { etapa: 'inicio' };
         await message.reply('🔴 Atendimento encerrado.\n\nDigite *Oi* se precisar de mais alguma coisa.');
@@ -173,7 +170,6 @@ client.on('message', async (message) => {
         return;
     }
 
-    // Cria sessão se não existir
     if (!sessoes[chatId]) {
         sessoes[chatId] = { etapa: 'inicio', nome: nomePushname };
     }
@@ -190,12 +186,9 @@ client.on('message', async (message) => {
             'qual a boa', 'meu rei', 'consagrado', 'truta'
         ];
 
-        // Gatilhos de intenção (já entende que o cliente quer algo sem precisar dar "oi")
         const querAgendar = texto.includes('agendar') || texto.includes('marcar') || texto.includes('horário') || texto.includes('horario') || texto.includes('cortar') || texto.includes('corte');
 
         if (saudacoes.some(saudacao => texto.startsWith(saudacao) || texto === saudacao) || querAgendar) {
-            
-            // SE O WHATSAPP ESCONDEU O NOME DA PESSOA:
             if (!sessoes[chatId].nome) {
                 sessoes[chatId].etapa = 'capturando_nome';
                 await message.reply('🔴 Bem-vindo ao *Leo Do Corte* 🔵\n\nComo o seu nome não aparece aqui no meu sistema, como posso te chamar?');
@@ -208,13 +201,11 @@ client.on('message', async (message) => {
         }
     } 
     else if (etapaAtual === 'capturando_nome') {
-        // Salva o nome que a pessoa digitou e vai pro menu
         sessoes[chatId].nome = message.body; 
         sessoes[chatId].etapa = 'menu';
         await enviarMenu(message, sessoes[chatId].nome);
     }
     else if (etapaAtual === 'menu') {
-        // Respostas Diretas de Horário e Localização
         if (texto.includes('horario') || texto.includes('funcionamento') || texto.includes('abrem') || texto.includes('fecham')) {
             await message.reply(`🕒 *Nosso Horário de Funcionamento:*\n💈 Terça a Quinta: 9h às 17h\n💈 Sexta: 8h às 19h\n💈 Sábado: 9h às 18h\n\n⚠️ Fechamos para almoço das *12h às 13h*.\n\n_(Digite *1* se quiser agendar um horário)_`);
             return;
@@ -223,8 +214,6 @@ client.on('message', async (message) => {
             await message.reply(`📍 *Nossa Localização*\n\nR. Junquilhas, 184 - Alterosa 2ª Seção\nBetim - MG, 32673-202\n\n_(Digite *voltar* para o menu principal)_`);
             return;
         }
-        
-        // Respostas Diretas de Serviços Específicos
         else if (texto.includes('corte') && (texto.includes('valor') || texto.includes('preço') || texto.includes('preco') || texto.includes('quanto'))) {
             await message.reply(`✂️ O valor do *Corte* é R$ 35.\n\n_(Digite *1* se quiser agendar)_`);
             return;
@@ -246,7 +235,6 @@ client.on('message', async (message) => {
             return;
         }
 
-        // Navegação Padrão do Menu Numérico
         if (texto === '1' || texto === 'agendar' || texto === 'marcar') {
             sessoes[chatId].etapa = 'escolhendo_horario';
             await message.reply(
@@ -304,8 +292,18 @@ client.on('message', async (message) => {
                 await message.reply('❌ Ocorreu um erro ao salvar no banco de dados. Tente novamente.');
                 return;
             }
+            
             sessoes[chatId].etapa = 'menu';
             await message.reply(`✅ *${sessoes[chatId].nome}*, seu agendamento para *${message.body}* foi salvo no sistema!\n\nVocê receberá lembretes automáticos conforme a data se aproxima.\n\n_(Para remarcar, digite *reagendar*. Para sair, digite *parar*)_`);
+            
+            try {
+                const telefoneFormatado = chatId.replace('@c.us', '');
+                const avisoDono = `🔔 *NOVO AGENDAMENTO!*\n\n👤 *Cliente:* ${sessoes[chatId].nome}\n📞 *Contato:* ${telefoneFormatado}\n📅 *Data/Hora:* ${message.body}`;
+                
+                await client.sendMessage(NUMERO_ADMIN, avisoDono);
+            } catch (e) {
+                console.log('Não foi possível notificar o dono.');
+            }
         });
     }
 });
