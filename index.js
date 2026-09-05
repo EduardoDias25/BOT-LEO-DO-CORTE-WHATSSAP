@@ -122,6 +122,7 @@ client.on('ready', () => {
 client.on('message', async (message) => {
     const texto = message.body.toLowerCase();
     const chatId = message.from;
+    console.log('O NÚMERO QUE MANDOU MENSAGEM É:', chatId);
 
     if (chatId.includes('@g.us')) return;
 
