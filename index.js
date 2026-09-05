@@ -1,11 +1,11 @@
-const qrcode = require('qrcode-terminal');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const os = require('os');
 const sqlite3 = require('sqlite3').verbose();
 const cron = require('node-cron');
 
-// ATENÇÃO: Coloque o seu número pessoal aqui para receber os avisos e usar comandos admin
-const NUMERO_ADMIN = '5531999999999@c.us'; 
+// ATENÇÃO: Coloque os números corretos aqui antes de iniciar!
+const NUMERO_SALAO = '553175415627'; // Tente com e sem o 9 se o WhatsApp der erro
+const NUMERO_ADMIN = '553180206409@c.us'; // Seu número pessoal para receber avisos
 
 const db = new sqlite3.Database('./agendamentos.db');
 db.run(`CREATE TABLE IF NOT EXISTS agendamentos (
@@ -26,10 +26,16 @@ const client = new Client({
 
 const sessoes = {};
 
-// Sistema de autenticação por QR Code no terminal
-client.on('qr', (qr) => {
-    qrcode.generate(qr, {small: true});
-    console.log('\n👆 ESCANEIE O QR CODE ACIMA COM O WHATSAPP DO SALÃO!\n');
+// Sistema de autenticação por Código de Emparelhamento (Ideal para Discloud)
+client.on('qr', async () => {
+    try {
+        setTimeout(async () => {
+            const codigo = await client.requestPairingCode(NUMERO_SALAO);
+            console.log(`\n📲 CÓDIGO DE EMPARELHAMENTO: ${codigo}\n`);
+        }, 2000);
+    } catch (error) {
+        console.log('Erro ao gerar código:', error);
+    }
 });
 
 function converterData(texto) {
