@@ -5,7 +5,7 @@ const cron = require('node-cron');
 
 // ATENÇÃO: Coloque os números corretos aqui antes de iniciar!
 const NUMERO_SALAO = '553175415627'; // Tente com e sem o 9 se o WhatsApp der erro
-const NUMERO_ADMIN = '553180206409@c.us'; // Seu número pessoal para receber avisos
+const NUMERO_ADMIN = '179778875347010@lid'; // Seu número pessoal para receber avisos
 
 const db = new sqlite3.Database('./agendamentos.db');
 db.run(`CREATE TABLE IF NOT EXISTS agendamentos (
@@ -122,7 +122,7 @@ client.on('ready', () => {
 client.on('message', async (message) => {
     const texto = message.body.toLowerCase();
     const chatId = message.from;
-    console.log('O NÚMERO QUE MANDOU MENSAGEM É:', chatId);
+    
 
     if (chatId.includes('@g.us')) return;
 
