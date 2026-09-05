@@ -4,7 +4,7 @@ const sqlite3 = require('sqlite3').verbose();
 const cron = require('node-cron');
 
 // Configurações do Sistema
-const NUMERO_SALAO = '5531999999999'; // Tente com e sem o 9 para a Discloud
+const NUMERO_SALAO = '553175415627'; // Tente com e sem o 9 para a Discloud
 const NUMERO_ADMIN = '179778875347010@lid'; 
 const CHAVE_PIX = '31999999999'; // Substitua pela sua chave Pix
 const NOME_PIX = 'Leonardo - Leo Do Corte';
