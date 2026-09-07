@@ -4,7 +4,7 @@ const sqlite3 = require('sqlite3').verbose();
 const cron = require('node-cron');
 
 // Configurações do Sistema
-const NUMERO_SALAO = '553175415627'; 
+const NUMERO_SALAO = '5531999999999'; 
 const NUMERO_ADMIN = '179778875347010@lid'; 
 const CHAVE_PIX = '31999999999'; 
 const NOME_PIX = 'Leonardo - Leo Do Corte';
@@ -109,15 +109,23 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
 }
 
 client.on('ready', () => {
-    console.log('🔴🔵 Sistema J.A.R.V.I.S. online com extração inteligente de contato.');
+    console.log('🔴🔵 Sistema J.A.R.V.I.S. online com extração inteligente e proteção de datas.');
 
+    // Faxina de inicialização (Roda sempre que o bot liga)
+    const agoraInit = new Date().toISOString();
+    db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agoraInit], function(err) {
+        if (!err && this.changes > 0) console.log(`🧹 Faxina de inicialização: ${this.changes} horários antigos apagados.`);
+    });
+
+    // Faxina noturna programada (00:00)
     cron.schedule('0 0 * * *', () => {
-        const agora = new Date().toISOString();
-        db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agora], function(err) {
+        const agoraMeiaNoite = new Date().toISOString();
+        db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agoraMeiaNoite], function(err) {
             if (!err && this.changes > 0) console.log(`🧹 Faxina noturna: ${this.changes} horários antigos apagados.`);
         });
     });
 
+    // Lembretes às 08:00
     cron.schedule('0 8 * * *', () => {
         db.all("SELECT telefone, nome, data_hora, data_iso FROM agendamentos", [], async (err, rows) => {
             if (err) return;
@@ -147,8 +155,9 @@ client.on('message', async (message) => {
     // BLOCO ADMINISTRATIVO J.A.R.V.I.S.
     if (chatId === NUMERO_ADMIN) {
         if (texto === '!agenda') {
-            db.all("SELECT * FROM agendamentos ORDER BY data_iso ASC", [], async (err, rows) => {
-                if (err || rows.length === 0) return await message.reply('Nenhum agendamento encontrado no banco de dados.');
+            const agoraAgenda = new Date().toISOString();
+            db.all("SELECT * FROM agendamentos WHERE data_fim_iso >= ? ORDER BY data_iso ASC", [agoraAgenda], async (err, rows) => {
+                if (err || rows.length === 0) return await message.reply('Nenhum agendamento futuro encontrado no banco de dados.');
                 let lista = '*📋 AGENDA GERAL:*\n\n';
                 rows.forEach(r => { lista += `ID: ${r.id} | ${r.nome}\nServiço: ${r.servico}\nData/Hora: ${r.data_hora}\n\n`; });
                 await message.reply(lista);
@@ -160,8 +169,9 @@ client.on('message', async (message) => {
             if (texto.includes('amanh')) alvo.setDate(alvo.getDate() + 1);
             const inicio = new Date(alvo.getFullYear(), alvo.getMonth(), alvo.getDate(), 0, 0, 0).toISOString();
             const fim = new Date(alvo.getFullYear(), alvo.getMonth(), alvo.getDate(), 23, 59, 59).toISOString();
+            const limiteAtual = new Date().toISOString();
             
-            db.all("SELECT * FROM agendamentos WHERE data_iso >= ? AND data_iso <= ? ORDER BY data_iso ASC", [inicio, fim], async (err, rows) => {
+            db.all("SELECT * FROM agendamentos WHERE data_iso >= ? AND data_iso <= ? AND data_fim_iso >= ? ORDER BY data_iso ASC", [inicio, fim, limiteAtual], async (err, rows) => {
                 if (err || rows.length === 0) return await message.reply('Grade vazia para esta data.');
                 let lista = texto === '!hoje' ? '*📅 AGENDA DE HOJE:*\n\n' : '*📅 AGENDA DE AMANHÃ:*\n\n';
                 rows.forEach(r => {
@@ -174,8 +184,8 @@ client.on('message', async (message) => {
             return;
         }
         if (texto === '!limpar') {
-            const agora = new Date().toISOString();
-            db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agora], function(err) {
+            const agoraLimpar = new Date().toISOString();
+            db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agoraLimpar], function(err) {
                 message.reply(`🧹 *Limpeza manual concluída!*\n${this.changes} agendamentos passados foram removidos.`);
             });
             return;
@@ -346,7 +356,7 @@ client.on('message', async (message) => {
                     await enviarMenu(message, sessoes[chatId].nome);
                 } else {
                     sessoes[chatId].etapa = 'capturando_nome';
-                    await message.reply('Olá! Seja bem-vindo ao *Leo Do Corte* 💈\🔴🔵\n\nPara começarmos, qual é o seu nome?');
+                    await message.reply('Olá! Seja bem-vindo ao *Leo Do Corte* 💈\n\nPara começarmos, qual é o seu nome?');
                 }
             });
         }
@@ -439,7 +449,6 @@ client.on('message', async (message) => {
             await message.reply(`✅ *Sucesso, ${sessoes[chatId].nome}!*\n\nSeu horário para *${sessoes[chatId].servicoSelecionado.nome}* está garantido para *${dataString}*.\n\nVocê receberá lembretes automáticos.\n_(Se precisar desmarcar depois, basta digitar *cancelar*)_`);
             
             try {
-                // Tenta extrair o número de telefone real do contato
                 const contatoCliente = await message.getContact();
                 const numeroReal = contatoCliente.number ? `${contatoCliente.number}` : chatId.replace('@c.us', '').replace('@lid', '');
 
