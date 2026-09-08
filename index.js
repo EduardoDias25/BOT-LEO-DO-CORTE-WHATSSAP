@@ -7,7 +7,7 @@ const cron = require('node-cron');
 const NUMERO_SALAO = '5531999999999'; 
 const NUMERO_ADMIN = '179778875347010@lid'; 
 const CHAVE_PIX = '31999999999'; 
-const NOME_PIX = 'Leonardo - Leo Do Corte';
+const NOME_PIX = 'Leonardo - Leo Du Corte';
 
 const db = new sqlite3.Database('./agendamentos.db');
 
@@ -109,7 +109,7 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
 }
 
 client.on('ready', () => {
-    console.log('🔴🔵 Sistema J.A.R.V.I.S. online com extração inteligente e proteção de datas.');
+    console.log('🔴🔵 Sistema Leo bot online com extração inteligente e proteção de datas.');
 
     // Faxina de inicialização (Roda sempre que o bot liga)
     const agoraInit = new Date().toISOString();
@@ -139,20 +139,62 @@ client.on('ready', () => {
                 const dif = Math.ceil((diaMarcado.getTime() - hoje.getTime()) / (1000 * 3600 * 24));
 
                 if (dif === 0) {
-                    try { await client.sendMessage(row.telefone, `🔴 Lembrete Leo Do Corte 🔵\n\nOlá ${row.nome}, é HOJE o seu agendamento às ${dataMarcada.getHours()}h${dataMarcada.getMinutes()===0?'00':dataMarcada.getMinutes()}. Te esperamos!`); } catch(e){}
+                    try { await client.sendMessage(row.telefone, `🔴 Lembrete Leo Du Corte 🔵\n\nOlá ${row.nome}, é HOJE o seu agendamento às ${dataMarcada.getHours()}h${dataMarcada.getMinutes()===0?'00':dataMarcada.getMinutes()}. Te esperamos!`); } catch(e){}
                 }
             }
         });
     });
 });
 
-client.on('message', async (message) => {
+// Usamos 'message_create' para o bot ler tanto o que o cliente manda, quanto o que VOCÊ manda
+client.on('message_create', async (message) => {
     const texto = message.body.toLowerCase();
+    
+    // MÁGICA 1: O TRUQUE INVISÍVEL PARA VOCÊ (Dono)
+    // Se a mensagem foi enviada por você (pelo WhatsApp do salão)
+    if (message.fromMe) {
+        const chatIdAlvo = message.to; 
+        
+        // Frase-chave para PAUSAR o bot de forma natural
+        if (texto === 'assumir' || texto === '!pausar') {
+            if (!sessoes[chatIdAlvo]) sessoes[chatIdAlvo] = { etapa: 'inicio' };
+            sessoes[chatIdAlvo].pausado = true;
+            console.log(`Bot PAUSADO para o chat: ${chatIdAlvo}`);
+        }
+        // Frase-chave para DESPAUSAR o bot
+        else if (texto === 'retomar' || texto === '!despausar') {
+            if (sessoes[chatIdAlvo]) sessoes[chatIdAlvo].pausado = false;
+            console.log(`Bot REATIVADO para o chat: ${chatIdAlvo}`);
+        }
+        
+        return; // O bot ignora as outras mensagens que você manda e não faz nada
+    }
+
     const chatId = message.from;
 
+    // Ignora grupos
     if (chatId.includes('@g.us')) return;
 
-    // BLOCO ADMINISTRATIVO J.A.R.V.I.S.
+    // A TRAVA DE SILÊNCIO: Se estiver pausado, o bot não processa NADA do cliente
+    if (sessoes[chatId] && sessoes[chatId].pausado) {
+        return; 
+    }
+
+    // MÁGICA 2: PEDIDO DE SOCORRO DO CLIENTE
+    if (texto.includes('atendente') || texto.includes('humano') || texto.includes('falar com o leo') || texto.includes('dúvida') || texto.includes('duvida')) {
+        if (!sessoes[chatId]) sessoes[chatId] = { etapa: 'inicio' };
+        sessoes[chatId].pausado = true; // Bot pausa sozinho na mesma hora
+        
+        await message.reply('👨‍💻 Entendi! Pausei meu sistema automático e já chamei o Leo. Logo ele te responde aqui mesmo.');
+        
+        // Dispara um alerta silencioso direto para o seu WhatsApp pessoal de administrador
+        try {
+            await client.sendMessage(NUMERO_ADMIN, `⚠️ *PRECISA DE ATENDIMENTO!*\n\nO número ${chatId.replace(/[^0-9]/g, '')} pediu ajuda e o bot se auto-pausou nessa conversa.`);
+        } catch (e) {}
+        return;
+    }
+
+    // BLOCO ADMINISTRATIVO Leo bot
     if (chatId === NUMERO_ADMIN) {
         if (texto === '!agenda') {
             const agoraAgenda = new Date().toISOString();
@@ -230,7 +272,7 @@ client.on('message', async (message) => {
                     if (err) return await message.reply('❌ Erro ao atualizar.');
                     await message.reply(`✅ Agendamento ID ${id} reagendado para *${novaDataString}*.`);
                     try {
-                        await client.sendMessage(row.telefone, `🔔 *Leo Do Corte*\nSeu horário foi alterado para: *${novaDataString}* (${row.servico}).`);
+                        await client.sendMessage(row.telefone, `🔔 *Leo Du Corte*\nSeu horário foi alterado para: *${novaDataString}* (${row.servico}).`);
                     } catch (e) {}
                 });
             });
@@ -356,7 +398,7 @@ client.on('message', async (message) => {
                     await enviarMenu(message, sessoes[chatId].nome);
                 } else {
                     sessoes[chatId].etapa = 'capturando_nome';
-                    await message.reply('Olá! Seja bem-vindo ao *Leo Do Corte* 💈\n\nPara começarmos, qual é o seu nome?');
+                    await message.reply('Olá! Seja bem-vindo ao *Leo Du Corte* 💈\n\nPara começarmos, qual é o seu nome?');
                 }
             });
         }
@@ -461,7 +503,7 @@ client.on('message', async (message) => {
 
 async function enviarMenu(message, nome) {
     await message.reply(
-        `🔴 Bem-vindo ao *Leo Do Corte* 🔵\n` +
+        `🔴 Bem-vindo ao *Leo Du Corte* 🔵\n` +
         `Olá, ${nome}! Como posso te ajudar hoje?\n\n` +
         `*1* 📅 - Marcar Horário\n` +
         `*2* 💰 - Ver Tabela de Preços\n` +
