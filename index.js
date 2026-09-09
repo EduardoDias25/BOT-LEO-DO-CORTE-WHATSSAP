@@ -30,6 +30,7 @@ const client = new Client({
 });
 
 const sessoes = {};
+let salaoFechado = { ativo: false, retorno: '' }; // CHAVE GERAL DO SALÃO
 
 // Catálogo de Serviços com Duração Dinâmica
 const SERVICOS = {
@@ -93,7 +94,6 @@ function converterData(texto) {
     return null;
 }
 
-// Checagem de Conflitos no Banco de Dados
 function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
     return new Promise((resolve, reject) => {
         const query = `
@@ -111,21 +111,16 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
 client.on('ready', () => {
     console.log('🔴🔵 Sistema Leo bot online com extração inteligente e proteção de datas.');
 
-    // Faxina de inicialização (Roda sempre que o bot liga)
     const agoraInit = new Date().toISOString();
     db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agoraInit], function(err) {
-        if (!err && this.changes > 0) console.log(`🧹 Faxina de inicialização: ${this.changes} horários antigos apagados.`);
+        if (!err && this.changes > 0) console.log(`🧹 Faxina de inicialização: ${this.changes} horários apagados.`);
     });
 
-    // Faxina noturna programada (00:00)
     cron.schedule('0 0 * * *', () => {
         const agoraMeiaNoite = new Date().toISOString();
-        db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agoraMeiaNoite], function(err) {
-            if (!err && this.changes > 0) console.log(`🧹 Faxina noturna: ${this.changes} horários antigos apagados.`);
-        });
+        db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agoraMeiaNoite]);
     });
 
-    // Lembretes às 08:00
     cron.schedule('0 8 * * *', () => {
         db.all("SELECT telefone, nome, data_hora, data_iso FROM agendamentos", [], async (err, rows) => {
             if (err) return;
@@ -146,36 +141,50 @@ client.on('ready', () => {
     });
 });
 
-// Usamos 'message_create' para o bot ler tanto o que o cliente manda, quanto o que VOCÊ manda
 client.on('message_create', async (message) => {
     const texto = message.body.toLowerCase();
     
-    // MÁGICA 1: O TRUQUE INVISÍVEL PARA VOCÊ (Dono)
-    // Se a mensagem foi enviada por você (pelo WhatsApp do salão)
+    // MÁGICA 1: O TRUQUE INVISÍVEL (Com flexibilidade de digitação)
     if (message.fromMe) {
         const chatIdAlvo = message.to; 
+        const textoLimpo = texto.trim();
         
-        // Frase-chave para PAUSAR o bot de forma natural
-        if (texto === 'assumir' || texto === '!pausar') {
+        // Aceita variações da palavra
+        const querPausar = textoLimpo.includes('assumir') || textoLimpo.includes('asumir') || textoLimpo === '!pausar';
+        const querRetomar = textoLimpo.includes('retomar') || textoLimpo === '!despausar' || textoLimpo === 'voltar bot';
+
+        if (querPausar) {
             if (!sessoes[chatIdAlvo]) sessoes[chatIdAlvo] = { etapa: 'inicio' };
             sessoes[chatIdAlvo].pausado = true;
             console.log(`Bot PAUSADO para o chat: ${chatIdAlvo}`);
         }
-        // Frase-chave para DESPAUSAR o bot
-        else if (texto === 'retomar' || texto === '!despausar') {
+        else if (querRetomar) {
             if (sessoes[chatIdAlvo]) sessoes[chatIdAlvo].pausado = false;
             console.log(`Bot REATIVADO para o chat: ${chatIdAlvo}`);
         }
-        
-        return; // O bot ignora as outras mensagens que você manda e não faz nada
+        return; 
     }
 
     const chatId = message.from;
-
-    // Ignora grupos
     if (chatId.includes('@g.us')) return;
 
-    // A TRAVA DE SILÊNCIO: Se estiver pausado, o bot não processa NADA do cliente
+    // 🛑 TRAVA DE SALÃO FECHADO
+    if (chatId !== NUMERO_ADMIN && salaoFechado.ativo) {
+        if (!sessoes[chatId] || sessoes[chatId].etapa !== 'fechado') {
+            if (!sessoes[chatId]) sessoes[chatId] = {};
+            sessoes[chatId].etapa = 'fechado'; 
+            
+            // Verifica se o Leo definiu uma data de retorno ou não
+            if (salaoFechado.retorno) {
+                await message.reply(`🛑 *Leo Du Corte informa:*\n\nInfelizmente nosso salão está fechado no momento.\nEstaremos de volta: *${salaoFechado.retorno}*!\n\nUm abraço e até breve! 💈`);
+            } else {
+                await message.reply(`🛑 *Leo Du Corte informa:*\n\nInfelizmente nosso salão está fechado no momento e não temos previsão de atendimento para hoje.\n\nUm abraço e até breve! 💈`);
+            }
+        }
+        return; 
+    }
+
+    // A TRAVA DE SILÊNCIO
     if (sessoes[chatId] && sessoes[chatId].pausado) {
         return; 
     }
@@ -183,11 +192,9 @@ client.on('message_create', async (message) => {
     // MÁGICA 2: PEDIDO DE SOCORRO DO CLIENTE
     if (texto.includes('atendente') || texto.includes('humano') || texto.includes('falar com o leo') || texto.includes('dúvida') || texto.includes('duvida')) {
         if (!sessoes[chatId]) sessoes[chatId] = { etapa: 'inicio' };
-        sessoes[chatId].pausado = true; // Bot pausa sozinho na mesma hora
+        sessoes[chatId].pausado = true; 
         
         await message.reply('👨‍💻 Entendi! Pausei meu sistema automático e já chamei o Leo. Logo ele te responde aqui mesmo.');
-        
-        // Dispara um alerta silencioso direto para o seu WhatsApp pessoal de administrador
         try {
             await client.sendMessage(NUMERO_ADMIN, `⚠️ *PRECISA DE ATENDIMENTO!*\n\nO número ${chatId.replace(/[^0-9]/g, '')} pediu ajuda e o bot se auto-pausou nessa conversa.`);
         } catch (e) {}
@@ -196,6 +203,30 @@ client.on('message_create', async (message) => {
 
     // BLOCO ADMINISTRATIVO Leo bot
     if (chatId === NUMERO_ADMIN) {
+        // COMANDOS DE ABRIR/FECHAR
+        if (texto === '!fechar') {
+            salaoFechado.ativo = true;
+            salaoFechado.retorno = '';
+            await message.reply(`🔒 *Salão Fechado!*\nA partir de agora, o bot avisará aos clientes que o salão está fechado (sem data de retorno definida).`);
+            return;
+        }
+        
+        if (texto.startsWith('!fechar ')) {
+            const dataRetorno = message.body.substring(8).trim(); 
+            salaoFechado.ativo = true;
+            salaoFechado.retorno = dataRetorno;
+            await message.reply(`🔒 *Salão Fechado!*\nA partir de agora, o bot avisará aos clientes que vocês estão fechados e retornam: *${dataRetorno}*.`);
+            return;
+        }
+
+        if (texto === '!abrir') {
+            salaoFechado.ativo = false;
+            salaoFechado.retorno = '';
+            await message.reply(`🔓 *Salão Aberto!*\nO bot voltou a atender e agendar normalmente.`);
+            return;
+        }
+
+        // OUTROS COMANDOS DE ADMIN
         if (texto === '!agenda') {
             const agoraAgenda = new Date().toISOString();
             db.all("SELECT * FROM agendamentos WHERE data_fim_iso >= ? ORDER BY data_iso ASC", [agoraAgenda], async (err, rows) => {
@@ -253,7 +284,7 @@ client.on('message_create', async (message) => {
                 if (err || !row) return await message.reply(`❌ Agendamento ID ${id} não encontrado.`);
 
                 const novaDataValidada = converterData(novoTextoData);
-                if (!novaDataValidada) return await message.reply('⚠️ Não entendi a nova data. Tente "amanha as 10" ou "26 as 14".');
+                if (!novaDataValidada) return await message.reply('⚠️ Não entendi a nova data.');
                 if (novaDataValidada.getHours() === 12) return await message.reply('⛔ Horário de almoço (12h) inválido.');
 
                 let duracaoMinutos = 30;
@@ -278,45 +309,28 @@ client.on('message_create', async (message) => {
             });
             return;
         }
-
         if (texto.startsWith('!adicionar ')) {
             const conteudo = message.body.replace('!adicionar', '').trim();
             const partes = conteudo.split('|').map(p => p.trim());
 
-            if (partes.length < 3) {
-                await message.reply('⚠️ Formato inválido.\nUse: *!adicionar Nome | Número do Serviço (1-4) | Data*\nExemplo: `!adicionar Carlos | 1 | amanha as 15`');
-                return;
-            }
+            if (partes.length < 3) return await message.reply('⚠️ Formato inválido.\nUse: *!adicionar Nome | Num do Serviço (1-4) | Data*');
 
             const nomeCliente = partes[0];
             const numServico = partes[1];
             const textoData = partes.slice(2).join(' ');
 
-            if (!SERVICOS[numServico]) {
-                await message.reply('❌ Número do serviço inválido. Escolha de 1 a 4:\n1-Corte, 2-Barba, 3-Combo, 4-Química');
-                return;
-            }
+            if (!SERVICOS[numServico]) return await message.reply('❌ Número do serviço inválido (1 a 4).');
 
             const servicoObj = SERVICOS[numServico];
             const dataValidada = converterData(textoData);
 
-            if (!dataValidada) {
-                await message.reply('⚠️ Não entendi a data. Tente algo como "hoje as 15" ou "25 as 16 e 30".');
-                return;
-            }
-
-            if (dataValidada.getHours() === 12) {
-                await message.reply('⛔ Horário de almoço (12h) inválido.');
-                return;
-            }
+            if (!dataValidada) return await message.reply('⚠️ Não entendi a data.');
+            if (dataValidada.getHours() === 12) return await message.reply('⛔ Horário de almoço (12h) inválido.');
 
             const dataFim = new Date(dataValidada.getTime() + servicoObj.duracao * 60000);
             const livre = await verificarDisponibilidade(dataValidada.toISOString(), dataFim.toISOString());
 
-            if (!livre) {
-                await message.reply('⏳ Conflito de horário! Já existe um atendimento nessa faixa.');
-                return;
-            }
+            if (!livre) return await message.reply('⏳ Conflito de horário! Já existe um atendimento nessa faixa.');
 
             const horaFormatada = `${dataValidada.getHours()}h${dataValidada.getMinutes()===0?'00':dataValidada.getMinutes()}`;
             const dataString = `${dataValidada.getDate()}/${dataValidada.getMonth()+1} às ${horaFormatada}`;
@@ -384,7 +398,6 @@ client.on('message_create', async (message) => {
         const querAgendar = texto.includes('agendar') || texto.includes('marcar') || texto.includes('horário') || texto.includes('cortar') || texto.includes('corte');
 
         if (saudacoes.some(saudacao => texto.startsWith(saudacao) || texto === saudacao) || querAgendar) {
-            
             if (sessoes[chatId].nome) {
                 sessoes[chatId].etapa = 'menu';
                 await enviarMenu(message, sessoes[chatId].nome);
