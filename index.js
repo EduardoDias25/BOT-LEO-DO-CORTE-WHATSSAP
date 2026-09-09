@@ -32,10 +32,10 @@ const client = new Client({
 const sessoes = {};
 let salaoFechado = { ativo: false, retorno: '' }; // CHAVE GERAL DO SALÃO
 
-// Catálogo de Serviços com Duração Dinâmica
+// Catálogo de Serviços com NOVO TEMPO DE CADEIRA
 const SERVICOS = {
-    '1': { nome: 'Corte', duracao: 30, preco: 'R$ 35' },
-    '2': { nome: 'Barba', duracao: 30, preco: 'R$ 30' },
+    '1': { nome: 'Corte', duracao: 60, preco: 'R$ 35' }, // Aumentado para 1 hora
+    '2': { nome: 'Barba', duracao: 40, preco: 'R$ 30' }, // Aumentado para 40 minutos
     '3': { nome: 'COMBO (Corte, Barba, Sobrancelha)', duracao: 60, preco: 'R$ 68' },
     '4': { nome: 'Química / Platinado', duracao: 120, preco: 'A partir de R$ 60' }
 };
@@ -51,7 +51,7 @@ client.on('qr', async () => {
     }
 });
 
-// IA de Datas com Arredondamento (Travamento de Grade 30 min)
+// Inteligência de Datas Completa (Para marcar horário)
 function converterData(texto) {
     let textoFormatado = texto.toLowerCase().trim();
     const agora = new Date();
@@ -94,6 +94,42 @@ function converterData(texto) {
     return null;
 }
 
+// NOVA FUNÇÃO: Inteligência para buscar apenas o DIA (Para consultar Vagas)
+function converterDataDia(texto) {
+    let textoFormatado = texto.toLowerCase().trim();
+    let agora = new Date();
+    let anoAtual = agora.getFullYear();
+    let mesAtual = agora.getMonth(); 
+    let dataCalculada = null;
+
+    const matchMesQueVem = textoFormatado.match(/m[eê]s q(?:ue)? vem dia (\d{1,2})/i);
+    const matchExato = textoFormatado.match(/^(\d{1,2})\/(\d{1,2})/);
+    const meses = {'janeiro': 0, 'fevereiro': 1, 'março': 2, 'marco': 2, 'abril': 3, 'maio': 4, 'junho': 5, 'julho': 6, 'agosto': 7, 'setembro': 8, 'outubro': 9, 'novembro': 10, 'dezembro': 11};
+    const matchTexto = textoFormatado.match(/(\d{1,2})\s*(?:de)?\s*([a-zç]+)/i);
+    const matchRelativo = textoFormatado.match(/(hoje|amanhã|amanha)/i);
+    const matchDireto = textoFormatado.match(/(?:dia\s*)?(\d{1,2})/i);
+
+    if (matchMesQueVem) {
+        let mesAlvo = mesAtual + 1;
+        if (mesAlvo > 11) { mesAlvo = 0; anoAtual += 1; }
+        dataCalculada = new Date(anoAtual, mesAlvo, parseInt(matchMesQueVem[1]), 0, 0, 0);
+    } else if (matchExato) {
+        dataCalculada = new Date(anoAtual, matchExato[2] - 1, matchExato[1], 0, 0, 0);
+    } else if (matchTexto && meses[matchTexto[2]] !== undefined) {
+        dataCalculada = new Date(anoAtual, meses[matchTexto[2]], parseInt(matchTexto[1]), 0, 0, 0);
+    } else if (matchRelativo) {
+        let diaAlvo = agora.getDate();
+        if (matchRelativo[1] === 'amanhã' || matchRelativo[1] === 'amanha') diaAlvo += 1;
+        dataCalculada = new Date(anoAtual, mesAtual, diaAlvo, 0, 0, 0);
+    } else if (matchDireto) {
+        let diaMarcado = parseInt(matchDireto[1]);
+        let mesAlvo = mesAtual;
+        if (diaMarcado < agora.getDate()) mesAlvo += 1; 
+        dataCalculada = new Date(anoAtual, mesAlvo, diaMarcado, 0, 0, 0);
+    }
+    return dataCalculada;
+}
+
 function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
     return new Promise((resolve, reject) => {
         const query = `
@@ -103,13 +139,13 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
         `;
         db.get(query, [novaDataFimIso, novaDataIso, novaDataIso, novaDataFimIso], (err, row) => {
             if (err) reject(err);
-            resolve(row ? false : true);
+            resolve(row ? false : true); // false = ocupado, true = livre
         });
     });
 }
 
 client.on('ready', () => {
-    console.log('🔴🔵 Sistema Leo bot online com extração inteligente e proteção de datas.');
+    console.log('🔴🔵 Sistema Leo bot online! Tempo de cadeira e Buscador de Vagas ativados.');
 
     const agoraInit = new Date().toISOString();
     db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agoraInit], function(err) {
@@ -144,23 +180,20 @@ client.on('ready', () => {
 client.on('message_create', async (message) => {
     const texto = message.body.toLowerCase();
     
-    // MÁGICA 1: O TRUQUE INVISÍVEL (Com flexibilidade de digitação)
+    // MÁGICA 1: O TRUQUE INVISÍVEL
     if (message.fromMe) {
         const chatIdAlvo = message.to; 
         const textoLimpo = texto.trim();
         
-        // Aceita variações da palavra
         const querPausar = textoLimpo.includes('assumir') || textoLimpo.includes('asumir') || textoLimpo === '!pausar';
         const querRetomar = textoLimpo.includes('retomar') || textoLimpo === '!despausar' || textoLimpo === 'voltar bot';
 
         if (querPausar) {
             if (!sessoes[chatIdAlvo]) sessoes[chatIdAlvo] = { etapa: 'inicio' };
             sessoes[chatIdAlvo].pausado = true;
-            console.log(`Bot PAUSADO para o chat: ${chatIdAlvo}`);
         }
         else if (querRetomar) {
             if (sessoes[chatIdAlvo]) sessoes[chatIdAlvo].pausado = false;
-            console.log(`Bot REATIVADO para o chat: ${chatIdAlvo}`);
         }
         return; 
     }
@@ -174,7 +207,6 @@ client.on('message_create', async (message) => {
             if (!sessoes[chatId]) sessoes[chatId] = {};
             sessoes[chatId].etapa = 'fechado'; 
             
-            // Verifica se o Leo definiu uma data de retorno ou não
             if (salaoFechado.retorno) {
                 await message.reply(`🛑 *Leo Du Corte informa:*\n\nInfelizmente nosso salão está fechado no momento.\nEstaremos de volta: *${salaoFechado.retorno}*!\n\nUm abraço e até breve! 💈`);
             } else {
@@ -201,16 +233,14 @@ client.on('message_create', async (message) => {
         return;
     }
 
-    // BLOCO ADMINISTRATIVO Leo bot
+    // BLOCO ADMINISTRATIVO
     if (chatId === NUMERO_ADMIN) {
-        // COMANDOS DE ABRIR/FECHAR
         if (texto === '!fechar') {
             salaoFechado.ativo = true;
             salaoFechado.retorno = '';
             await message.reply(`🔒 *Salão Fechado!*\nA partir de agora, o bot avisará aos clientes que o salão está fechado (sem data de retorno definida).`);
             return;
         }
-        
         if (texto.startsWith('!fechar ')) {
             const dataRetorno = message.body.substring(8).trim(); 
             salaoFechado.ativo = true;
@@ -218,15 +248,12 @@ client.on('message_create', async (message) => {
             await message.reply(`🔒 *Salão Fechado!*\nA partir de agora, o bot avisará aos clientes que vocês estão fechados e retornam: *${dataRetorno}*.`);
             return;
         }
-
         if (texto === '!abrir') {
             salaoFechado.ativo = false;
             salaoFechado.retorno = '';
             await message.reply(`🔓 *Salão Aberto!*\nO bot voltou a atender e agendar normalmente.`);
             return;
         }
-
-        // OUTROS COMANDOS DE ADMIN
         if (texto === '!agenda') {
             const agoraAgenda = new Date().toISOString();
             db.all("SELECT * FROM agendamentos WHERE data_fim_iso >= ? ORDER BY data_iso ASC", [agoraAgenda], async (err, rows) => {
@@ -275,10 +302,7 @@ client.on('message_create', async (message) => {
             const id = partes[1];
             const novoTextoData = partes.slice(2).join(' ');
 
-            if (!id || !novoTextoData) {
-                await message.reply('⚠️ Formato incorreto. Use: *!reagendar [ID] [Nova Data]*');
-                return;
-            }
+            if (!id || !novoTextoData) return await message.reply('⚠️ Formato incorreto. Use: *!reagendar [ID] [Nova Data]*');
 
             db.get(`SELECT * FROM agendamentos WHERE id = ?`, [id], async (err, row) => {
                 if (err || !row) return await message.reply(`❌ Agendamento ID ${id} não encontrado.`);
@@ -287,7 +311,8 @@ client.on('message_create', async (message) => {
                 if (!novaDataValidada) return await message.reply('⚠️ Não entendi a nova data.');
                 if (novaDataValidada.getHours() === 12) return await message.reply('⛔ Horário de almoço (12h) inválido.');
 
-                let duracaoMinutos = 30;
+                let duracaoMinutos = 60; // Corte padrao
+                if (row.servico.includes('Barba')) duracaoMinutos = 40;
                 if (row.servico.includes('Combo') || row.servico.includes('COMBO')) duracaoMinutos = 60;
                 if (row.servico.includes('Química') || row.servico.includes('Platinado')) duracaoMinutos = 120;
 
@@ -344,12 +369,13 @@ client.on('message_create', async (message) => {
         }
     }
 
+    // INTERAÇÃO COM O CLIENTE NORMAL
     if (texto === 'pix' || texto === 'pagar' || texto === 'pagamento') {
         await message.reply(`💸 *Área de Pagamento*\n\nNossa Chave Pix (Celular):\n*${CHAVE_PIX}*\nNome: ${NOME_PIX}\n\nObrigado pela preferência!`);
         return;
     }
 
-    const intencaoCancelar = texto.includes('cancelar') || texto.includes('desmarcar') || texto.includes('deu ruim') || texto.includes('não vou conseguir') || texto.includes('nao vou poder') || texto === '5';
+    const intencaoCancelar = texto.includes('cancelar') || texto.includes('desmarcar') || texto.includes('deu ruim') || texto === '5';
     if (intencaoCancelar) {
         db.all(`SELECT id, data_hora FROM agendamentos WHERE telefone = ?`, [chatId], async (err, rows) => {
             if (err || rows.length === 0) {
@@ -357,11 +383,9 @@ client.on('message_create', async (message) => {
                 return;
             }
             db.run(`DELETE FROM agendamentos WHERE telefone = ?`, [chatId], async function(err) {
-                await message.reply('🗑️ *Horário Cancelado!*\n\nSua reserva foi removida do nosso sistema. Estaremos te esperando na próxima vez. Digite *Oi* se quiser marcar uma nova data.');
+                await message.reply('🗑️ *Horário Cancelado!*\n\nSua reserva foi removida. Digite *Oi* se quiser marcar uma nova data.');
                 if (sessoes[chatId]) sessoes[chatId].etapa = 'inicio';
-                try {
-                    await client.sendMessage(NUMERO_ADMIN, `⚠️ *DESISTÊNCIA AUTÔNOMA*\n\nO cliente desmarcou o horário pelo bot. Vaga liberada na grade!`);
-                } catch (e) {}
+                try { await client.sendMessage(NUMERO_ADMIN, `⚠️ *DESISTÊNCIA AUTÔNOMA*\nO cliente desmarcou o horário. Vaga liberada!`); } catch (e) {}
             });
         });
         return;
@@ -383,10 +407,7 @@ client.on('message_create', async (message) => {
     const etapaAtual = sessoes[chatId].etapa;
 
     if (etapaAtual === 'capturando_nome') {
-        if (message.body.trim().length < 2) {
-            await message.reply('⚠️ Por favor, digite seu nome para continuarmos:');
-            return;
-        }
+        if (message.body.trim().length < 2) return await message.reply('⚠️ Por favor, digite seu nome para continuarmos:');
         sessoes[chatId].nome = message.body.trim();
         sessoes[chatId].etapa = 'menu';
         await enviarMenu(message, sessoes[chatId].nome);
@@ -394,8 +415,8 @@ client.on('message_create', async (message) => {
     }
 
     if (etapaAtual === 'inicio') {
-        const saudacoes = ['oi', 'oii', 'oiii', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'bão', 'bao', 'aoba', 'cole', 'coé', 'coe', 'qualé', 'qual foi', 'eai', 'eaí', 'iai', 'eae', 'opa', 'salve', 'fala'];
-        const querAgendar = texto.includes('agendar') || texto.includes('marcar') || texto.includes('horário') || texto.includes('cortar') || texto.includes('corte');
+        const saudacoes = ['oi', 'oii', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'opa', 'salve', 'fala'];
+        const querAgendar = texto.includes('agendar') || texto.includes('marcar') || texto.includes('corte');
 
         if (saudacoes.some(saudacao => texto.startsWith(saudacao) || texto === saudacao) || querAgendar) {
             if (sessoes[chatId].nome) {
@@ -403,7 +424,6 @@ client.on('message_create', async (message) => {
                 await enviarMenu(message, sessoes[chatId].nome);
                 return;
             }
-
             db.get(`SELECT nome FROM agendamentos WHERE telefone = ? ORDER BY id DESC LIMIT 1`, [chatId], async (err, row) => {
                 if (row && row.nome) {
                     sessoes[chatId].nome = row.nome;
@@ -417,8 +437,15 @@ client.on('message_create', async (message) => {
         }
     } 
     else if (etapaAtual === 'menu') {
-        if (texto.includes('local') || texto.includes('endereço') || texto.includes('onde fica')) {
-            await message.reply(`📍 *Nossa Localização*\n\nR. Junquilhas, 184 - Alterosa 2ª Seção\nBetim - MG, 32673-202\n\n🗺️ *Abra direto no GPS/Uber:*\nhttps://www.google.com/maps/search/?api=1&query=R.+Junquilhas,+184+-+Alterosa+2ª+Seção,+Betim+-+MG\n\n_(Digite *voltar* para o menu)_`);
+        if (texto.includes('local') || texto.includes('onde fica')) {
+            await message.reply(`📍 *Nossa Localização*\n\nR. Junquilhas, 184\n\n🗺️ *GPS/Uber:*\nhttps://www.google.com/maps/search/?api=1&query=R.+Junquilhas,+184\n\n_(Digite *voltar* para o menu)_`);
+            return;
+        }
+
+        // NOVO: Gatilho para consultar horários livres direto do menu
+        if (texto === '6' || texto.includes('horários livres') || texto.includes('vagas') || texto.includes('horario disponivel') || texto.includes('quais horarios')) {
+            sessoes[chatId].etapa = 'consultando_vagas';
+            await message.reply(`🕒 Para qual dia você gostaria de ver nossas vagas?\n\n_(Exemplo: amanhã, dia 27, pro mes que vem dia 28)_`);
             return;
         }
 
@@ -426,7 +453,7 @@ client.on('message_create', async (message) => {
         if (texto.includes('corte') || texto.includes('cortar')) servicoDireto = SERVICOS['1'];
         else if (texto.includes('barba')) servicoDireto = SERVICOS['2'];
         else if (texto.includes('combo')) servicoDireto = SERVICOS['3'];
-        else if (texto.includes('química') || texto.includes('platinado') || texto.includes('quimica')) servicoDireto = SERVICOS['4'];
+        else if (texto.includes('química') || texto.includes('platinado')) servicoDireto = SERVICOS['4'];
 
         if (servicoDireto) {
             sessoes[chatId].servicoSelecionado = servicoDireto;
@@ -447,26 +474,23 @@ client.on('message_create', async (message) => {
             );
         }
         else if (texto === '2' || texto === 'tabela') {
-            await message.reply(`🔴 *TABELA DE PREÇOS* 🔵\n\n✂️ *Corte:* R$ 35\n🧔 *Barba:* R$ 30\n📏 *Pé acabamento:* R$ 15\n👁️ *Sobrancelha:* R$ 18\n🔥 *COMBO:* R$ 68\n\n🧪 *Química / Cor:*\n• Alisamento: R$ 35\n• Luzes: R$ 60\n• Pigment Preto: R$ 35\n• Pigment Color: R$ 120\n\n_(Para agendar, digite *1*)_`);
+            await message.reply(`🔴 *TABELA DE PREÇOS* 🔵\n\n✂️ *Corte:* R$ 35\n🧔 *Barba:* R$ 30\n🔥 *COMBO:* R$ 68\n\n_(Para agendar, digite *1*)_`);
         }
         else if (texto === '3') {
-            await message.reply(`📍 R. Junquilhas, 184 - Alterosa 2ª Seção\nBetim - MG\n\n🗺️ *GPS:* https://www.google.com/maps/search/?api=1&query=R.+Junquilhas,+184+-+Alterosa+2ª+Seção,+Betim+-+MG\n\n_(Digite *voltar* para retornar)_`);
+            await message.reply(`📍 R. Junquilhas, 184\n\n🗺️ *GPS:* https://www.google.com/maps/search/?api=1&query=R.+Junquilhas,+184\n\n_(Digite *voltar* para retornar)_`);
         }
         else if (texto === '4' || texto.includes('insta')) {
             await message.reply(`📸 Nosso Instagram:\n👉 https://www.instagram.com/leoducorteofc_01/\n\n_(Digite *voltar* para retornar)_`);
         }
         else {
-            await message.reply('❌ Opção não encontrada. Digite um número de 1 a 5.');
+            await message.reply('❌ Opção não encontrada. Digite um número de 1 a 6.');
         }
     }
     else if (etapaAtual === 'escolhendo_servico') {
         if (SERVICOS[texto]) {
             sessoes[chatId].servicoSelecionado = SERVICOS[texto];
             sessoes[chatId].etapa = 'escolhendo_horario';
-            await message.reply(
-                `Ótima escolha! 💈\n\n` +
-                `Agora digite a data e o horário (Ex: *amanhã às 15h* ou *25 às 16:30*):`
-            );
+            await message.reply(`Ótima escolha! 💈\n\nAgora digite a data e o horário (Ex: *amanhã às 15h* ou *25 às 16:30*):`);
         } else {
             await message.reply('⚠️ Por favor, escolha um número de 1 a 4 para o serviço.');
         }
@@ -489,7 +513,7 @@ client.on('message_create', async (message) => {
         const livre = await verificarDisponibilidade(dataValidada.toISOString(), dataFim.toISOString());
         
         if (!livre) {
-            await message.reply(`⏳ *Opa, conflito de agenda!*\n\nInfelizmente esse horário já está reservado ou o tempo de serviço vai encavalar com outro cliente. Que tal tentar 30 minutinhos antes ou depois? Digite uma nova hora:`);
+            await message.reply(`⏳ *Opa, conflito de agenda!*\n\nInfelizmente esse horário já está reservado ou o tempo de serviço vai encavalar com outro cliente. Que tal tentar ver nossas vagas livres? (Digite *voltar* para o menu e escolha a opção 6)`);
             return;
         }
 
@@ -512,6 +536,56 @@ client.on('message_create', async (message) => {
             } catch (e) {}
         });
     }
+    // NOVO BLOCO: Mostrando a lista de horários disponíveis
+    else if (etapaAtual === 'consultando_vagas') {
+        const dataAlvo = converterDataDia(texto);
+        if (!dataAlvo) {
+            await message.reply('⚠️ Não consegui entender a data. Tente algo como "amanhã", "hoje", "dia 25" ou "mes que vem dia 28".');
+            return;
+        }
+
+        const inicioDia = new Date(dataAlvo.getFullYear(), dataAlvo.getMonth(), dataAlvo.getDate(), 0, 0, 0).toISOString();
+        const fimDia = new Date(dataAlvo.getFullYear(), dataAlvo.getMonth(), dataAlvo.getDate(), 23, 59, 59).toISOString();
+
+        db.all("SELECT * FROM agendamentos WHERE data_iso >= ? AND data_iso <= ?", [inicioDia, fimDia], async (err, rows) => {
+            const horariosPossiveis = [];
+            // Monta os horários das 09h às 19h (de 30 em 30 min)
+            for(let h = 9; h <= 18; h++) {
+                if (h === 12) continue; // Pula o almoço das 12h
+                horariosPossiveis.push(`${h.toString().padStart(2, '0')}:00`);
+                horariosPossiveis.push(`${h.toString().padStart(2, '0')}:30`);
+            }
+            
+            const livres = horariosPossiveis.filter(horaStr => {
+                const [h, m] = horaStr.split(':').map(Number);
+                const dataTest = new Date(dataAlvo.getFullYear(), dataAlvo.getMonth(), dataAlvo.getDate(), h, m, 0);
+                const dataTestFim = new Date(dataTest.getTime() + 30 * 60000); // testa janela básica de 30 min
+                
+                for (let row of rows) {
+                    const rowInicio = new Date(row.data_iso);
+                    const rowFim = new Date(row.data_fim_iso);
+                    // Se o horário bater no meio de um atendimento longo (como o corte de 1h), ele bloqueia!
+                    if ((dataTest < rowFim && dataTestFim > rowInicio) || (dataTest >= rowInicio && dataTest < rowFim)) {
+                        return false; 
+                    }
+                }
+                // Tira horários que já passaram se for hoje
+                if (dataTest < new Date()) return false;
+
+                return true;
+            });
+
+            const dataString = `${dataAlvo.getDate()}/${dataAlvo.getMonth()+1}`;
+            
+            if (livres.length === 0) {
+                await message.reply(`📅 *Vagas para o dia ${dataString}*\n\nInfelizmente nossa agenda está 100% lotada (ou fechada) neste dia. 😕\nQuer tentar ver para o dia seguinte? Digite a nova data (ou *voltar* para sair):`);
+            } else {
+                let listaTexto = livres.join(' | ');
+                await message.reply(`📅 *Vagas para o dia ${dataString}*\n\nTemos estes horários livres para agendar:\n\n🕒 ${listaTexto}\n\n_(Para marcar, digite *1* e escolha seu serviço)_`);
+                sessoes[chatId].etapa = 'menu'; // Volta pro menu para ele já agendar
+            }
+        });
+    }
 });
 
 async function enviarMenu(message, nome) {
@@ -522,7 +596,8 @@ async function enviarMenu(message, nome) {
         `*2* 💰 - Ver Tabela de Preços\n` +
         `*3* 📍 - Nossa Localização\n` +
         `*4* 📸 - Nosso Instagram\n` +
-        `*5* 🗑️ - Cancelar meu Agendamento\n\n` +
+        `*5* 🗑️ - Cancelar meu Agendamento\n` +
+        `*6* 🕒 - Ver Horários Livres\n\n` + // Nova opção inserida aqui!
         `_Dica: Se quiser deixar pago, é só digitar *Pix*._`
     );
 }
