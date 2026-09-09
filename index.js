@@ -30,12 +30,12 @@ const client = new Client({
 });
 
 const sessoes = {};
-let salaoFechado = { ativo: false, retorno: '' }; // CHAVE GERAL DO SALÃO
+let salaoFechado = { ativo: false, retorno: '' }; 
 
-// Catálogo de Serviços com NOVO TEMPO DE CADEIRA
+// Catálogo de Serviços
 const SERVICOS = {
-    '1': { nome: 'Corte', duracao: 60, preco: 'R$ 35' }, // Aumentado para 1 hora
-    '2': { nome: 'Barba', duracao: 40, preco: 'R$ 30' }, // Aumentado para 40 minutos
+    '1': { nome: 'Corte', duracao: 60, preco: 'R$ 35' }, 
+    '2': { nome: 'Barba', duracao: 40, preco: 'R$ 30' }, 
     '3': { nome: 'COMBO (Corte, Barba, Sobrancelha)', duracao: 60, preco: 'R$ 68' },
     '4': { nome: 'Química / Platinado', duracao: 120, preco: 'A partir de R$ 60' }
 };
@@ -51,7 +51,24 @@ client.on('qr', async () => {
     }
 });
 
-// Inteligência de Datas Completa (Para marcar horário)
+// NOVA FUNÇÃO: O Cérebro do Calendário do Leo Du Corte
+function obterHorarioFuncionamento(data) {
+    const diaSemana = data.getDay(); // 0=Dom, 1=Seg, 2=Ter, 3=Qua, 4=Qui, 5=Sex, 6=Sáb
+    let inicio = 0, fim = 0;
+    
+    if (diaSemana >= 2 && diaSemana <= 4) { // Terça a Quinta
+        inicio = 9; fim = 17;
+    } else if (diaSemana === 5) { // Sexta
+        inicio = 8; fim = 19;
+    } else if (diaSemana === 6) { // Sábado
+        inicio = 9; fim = 18;
+    } else {
+        return null; // Domingo (0) e Segunda (1) está FECHADO
+    }
+    return { inicio, fim };
+}
+
+// Inteligência de Datas Completa
 function converterData(texto) {
     let textoFormatado = texto.toLowerCase().trim();
     const agora = new Date();
@@ -94,7 +111,6 @@ function converterData(texto) {
     return null;
 }
 
-// NOVA FUNÇÃO: Inteligência para buscar apenas o DIA (Para consultar Vagas)
 function converterDataDia(texto) {
     let textoFormatado = texto.toLowerCase().trim();
     let agora = new Date();
@@ -139,13 +155,13 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
         `;
         db.get(query, [novaDataFimIso, novaDataIso, novaDataIso, novaDataFimIso], (err, row) => {
             if (err) reject(err);
-            resolve(row ? false : true); // false = ocupado, true = livre
+            resolve(row ? false : true); 
         });
     });
 }
 
 client.on('ready', () => {
-    console.log('🔴🔵 Sistema Leo bot online! Tempo de cadeira e Buscador de Vagas ativados.');
+    console.log('🔴🔵 Sistema Leo bot online! Caleńdario Dinâmico Ativado (Horários Flexíveis).');
 
     const agoraInit = new Date().toISOString();
     db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agoraInit], function(err) {
@@ -201,7 +217,7 @@ client.on('message_create', async (message) => {
     const chatId = message.from;
     if (chatId.includes('@g.us')) return;
 
-    // 🛑 TRAVA DE SALÃO FECHADO
+    // 🛑 TRAVA DE SALÃO FECHADO PELO ADMIN
     if (chatId !== NUMERO_ADMIN && salaoFechado.ativo) {
         if (!sessoes[chatId] || sessoes[chatId].etapa !== 'fechado') {
             if (!sessoes[chatId]) sessoes[chatId] = {};
@@ -309,9 +325,17 @@ client.on('message_create', async (message) => {
 
                 const novaDataValidada = converterData(novoTextoData);
                 if (!novaDataValidada) return await message.reply('⚠️ Não entendi a nova data.');
-                if (novaDataValidada.getHours() === 12) return await message.reply('⛔ Horário de almoço (12h) inválido.');
+                
+                const horarioFunc = obterHorarioFuncionamento(novaDataValidada);
+                if (!horarioFunc) return await message.reply('⛔ Nós não abrimos neste dia da semana (Domingo ou Segunda).');
+                
+                const horaMarcada = novaDataValidada.getHours();
+                if (horaMarcada < horarioFunc.inicio || horaMarcada >= horarioFunc.fim) {
+                    return await message.reply(`⛔ Fora do horário. Neste dia, abrimos das ${horarioFunc.inicio}h às ${horarioFunc.fim}h.`);
+                }
+                if (horaMarcada === 12) return await message.reply('⛔ Horário de almoço (12h) inválido.');
 
-                let duracaoMinutos = 60; // Corte padrao
+                let duracaoMinutos = 60; 
                 if (row.servico.includes('Barba')) duracaoMinutos = 40;
                 if (row.servico.includes('Combo') || row.servico.includes('COMBO')) duracaoMinutos = 60;
                 if (row.servico.includes('Química') || row.servico.includes('Platinado')) duracaoMinutos = 120;
@@ -327,9 +351,7 @@ client.on('message_create', async (message) => {
                 [novaDataString, novaDataValidada.toISOString(), novaDataFim.toISOString(), id], async (err) => {
                     if (err) return await message.reply('❌ Erro ao atualizar.');
                     await message.reply(`✅ Agendamento ID ${id} reagendado para *${novaDataString}*.`);
-                    try {
-                        await client.sendMessage(row.telefone, `🔔 *Leo Du Corte*\nSeu horário foi alterado para: *${novaDataString}* (${row.servico}).`);
-                    } catch (e) {}
+                    try { await client.sendMessage(row.telefone, `🔔 *Leo Du Corte*\nSeu horário foi alterado para: *${novaDataString}* (${row.servico}).`); } catch (e) {}
                 });
             });
             return;
@@ -350,7 +372,15 @@ client.on('message_create', async (message) => {
             const dataValidada = converterData(textoData);
 
             if (!dataValidada) return await message.reply('⚠️ Não entendi a data.');
-            if (dataValidada.getHours() === 12) return await message.reply('⛔ Horário de almoço (12h) inválido.');
+            
+            const horarioFunc = obterHorarioFuncionamento(dataValidada);
+            if (!horarioFunc) return await message.reply('⛔ Nós não abrimos neste dia da semana (Domingo ou Segunda).');
+            
+            const horaMarcada = dataValidada.getHours();
+            if (horaMarcada < horarioFunc.inicio || horaMarcada >= horarioFunc.fim) {
+                return await message.reply(`⛔ Fora do horário. Neste dia, abrimos das ${horarioFunc.inicio}h às ${horarioFunc.fim}h.`);
+            }
+            if (horaMarcada === 12) return await message.reply('⛔ Horário de almoço (12h) inválido.');
 
             const dataFim = new Date(dataValidada.getTime() + servicoObj.duracao * 60000);
             const livre = await verificarDisponibilidade(dataValidada.toISOString(), dataFim.toISOString());
@@ -378,10 +408,7 @@ client.on('message_create', async (message) => {
     const intencaoCancelar = texto.includes('cancelar') || texto.includes('desmarcar') || texto.includes('deu ruim') || texto === '5';
     if (intencaoCancelar) {
         db.all(`SELECT id, data_hora FROM agendamentos WHERE telefone = ?`, [chatId], async (err, rows) => {
-            if (err || rows.length === 0) {
-                await message.reply('Não encontrei nenhum horário marcado no seu número para cancelar. Se precisar de algo, digite *Oi*.');
-                return;
-            }
+            if (err || rows.length === 0) return await message.reply('Não encontrei nenhum horário marcado no seu número para cancelar. Se precisar de algo, digite *Oi*.');
             db.run(`DELETE FROM agendamentos WHERE telefone = ?`, [chatId], async function(err) {
                 await message.reply('🗑️ *Horário Cancelado!*\n\nSua reserva foi removida. Digite *Oi* se quiser marcar uma nova data.');
                 if (sessoes[chatId]) sessoes[chatId].etapa = 'inicio';
@@ -421,8 +448,7 @@ client.on('message_create', async (message) => {
         if (saudacoes.some(saudacao => texto.startsWith(saudacao) || texto === saudacao) || querAgendar) {
             if (sessoes[chatId].nome) {
                 sessoes[chatId].etapa = 'menu';
-                await enviarMenu(message, sessoes[chatId].nome);
-                return;
+                return await enviarMenu(message, sessoes[chatId].nome);
             }
             db.get(`SELECT nome FROM agendamentos WHERE telefone = ? ORDER BY id DESC LIMIT 1`, [chatId], async (err, row) => {
                 if (row && row.nome) {
@@ -438,15 +464,12 @@ client.on('message_create', async (message) => {
     } 
     else if (etapaAtual === 'menu') {
         if (texto.includes('local') || texto.includes('onde fica')) {
-            await message.reply(`📍 *Nossa Localização*\n\nR. Junquilhas, 184\n\n🗺️ *GPS/Uber:*\nhttps://www.google.com/maps/search/?api=1&query=R.+Junquilhas,+184\n\n_(Digite *voltar* para o menu)_`);
-            return;
+            return await message.reply(`📍 *Nossa Localização*\n\nR. Junquilhas, 184\n\n🗺️ *GPS/Uber:*\nhttps://www.google.com/maps/search/?api=1&query=R.+Junquilhas,+184\n\n_(Digite *voltar* para o menu)_`);
         }
 
-        // NOVO: Gatilho para consultar horários livres direto do menu
         if (texto === '6' || texto.includes('horários livres') || texto.includes('vagas') || texto.includes('horario disponivel') || texto.includes('quais horarios')) {
             sessoes[chatId].etapa = 'consultando_vagas';
-            await message.reply(`🕒 Para qual dia você gostaria de ver nossas vagas?\n\n_(Exemplo: amanhã, dia 27, pro mes que vem dia 28)_`);
-            return;
+            return await message.reply(`🕒 Para qual dia você gostaria de ver nossas vagas?\n\n_(Exemplo: amanhã, dia 27, pro mes que vem dia 28)_`);
         }
 
         let servicoDireto = null;
@@ -458,20 +481,12 @@ client.on('message_create', async (message) => {
         if (servicoDireto) {
             sessoes[chatId].servicoSelecionado = servicoDireto;
             sessoes[chatId].etapa = 'escolhendo_horario';
-            await message.reply(`Show! Escolheu *${servicoDireto.nome}* (${servicoDireto.preco}). 💈\n\nAgora digite a data e o horário desejado (Ex: *amanhã às 15h* ou *25 às 16:30*):`);
-            return;
+            return await message.reply(`Show! Escolheu *${servicoDireto.nome}* (${servicoDireto.preco}). 💈\n\nAgora digite a data e o horário desejado (Ex: *amanhã às 15h* ou *25 às 16:30*):`);
         }
 
         if (texto === '1' || texto === 'agendar' || texto === 'marcar') {
             sessoes[chatId].etapa = 'escolhendo_servico';
-            await message.reply(
-                `✂️ *O que vamos fazer hoje, ${sessoes[chatId].nome}?*\n\n` +
-                `*1* - Corte (R$ 35)\n` +
-                `*2* - Barba (R$ 30)\n` +
-                `*3* - Combo (Corte, Barba, Sobrancelha - R$ 68)\n` +
-                `*4* - Química / Platinado\n\n` +
-                `_Digite o número do serviço:_`
-            );
+            await message.reply(`✂️ *O que vamos fazer hoje, ${sessoes[chatId].nome}?*\n\n*1* - Corte (R$ 35)\n*2* - Barba (R$ 30)\n*3* - Combo (Corte, Barba, Sobrancelha - R$ 68)\n*4* - Química / Platinado\n\n_Digite o número do serviço:_`);
         }
         else if (texto === '2' || texto === 'tabela') {
             await message.reply(`🔴 *TABELA DE PREÇOS* 🔵\n\n✂️ *Corte:* R$ 35\n🧔 *Barba:* R$ 30\n🔥 *COMBO:* R$ 68\n\n_(Para agendar, digite *1*)_`);
@@ -497,25 +512,22 @@ client.on('message_create', async (message) => {
     }
     else if (etapaAtual === 'escolhendo_horario') {
         const dataValidada = converterData(texto);
-        if (!dataValidada) {
-            await message.reply('⚠️ Não consegui entender. Tente usar formatos mais diretos como "hoje as 15", "amanha as 10" ou "25 as 16 e 30":');
-            return;
-        }
+        if (!dataValidada) return await message.reply('⚠️ Não consegui entender. Tente usar formatos mais diretos como "hoje as 15" ou "amanha as 10":');
 
-        if (dataValidada.getHours() === 12) {
-            await message.reply('⛔ Infelizmente as 12h é nosso horário de almoço. Por favor, escolha outro horário (ex: 11:30 ou 13:00).');
-            return;
+        const horarioFunc = obterHorarioFuncionamento(dataValidada);
+        if (!horarioFunc) return await message.reply('⛔ Nós não abrimos neste dia da semana (Domingo ou Segunda-feira). Por favor, escolha outro dia.');
+
+        const horaMarcada = dataValidada.getHours();
+        if (horaMarcada < horarioFunc.inicio || horaMarcada >= horarioFunc.fim) {
+            return await message.reply(`⛔ Fora do nosso horário de funcionamento. Neste dia da semana, atendemos das ${horarioFunc.inicio}h às ${horarioFunc.fim}h.`);
         }
+        if (horaMarcada === 12) return await message.reply('⛔ Infelizmente as 12h é nosso horário de almoço. Por favor, escolha outro horário (ex: 11:30 ou 13:00).');
 
         const duracao = sessoes[chatId].servicoSelecionado.duracao;
         const dataFim = new Date(dataValidada.getTime() + duracao * 60000);
-
         const livre = await verificarDisponibilidade(dataValidada.toISOString(), dataFim.toISOString());
         
-        if (!livre) {
-            await message.reply(`⏳ *Opa, conflito de agenda!*\n\nInfelizmente esse horário já está reservado ou o tempo de serviço vai encavalar com outro cliente. Que tal tentar ver nossas vagas livres? (Digite *voltar* para o menu e escolha a opção 6)`);
-            return;
-        }
+        if (!livre) return await message.reply(`⏳ *Opa, conflito de agenda!*\n\nEsse horário já está reservado ou o tempo encavala com outro cliente. Quer tentar ver nossas vagas livres? (Digite *voltar* para o menu e escolha a opção 6)`);
 
         const horaArredondada = `${dataValidada.getHours()}h${dataValidada.getMinutes()===0?'00':dataValidada.getMinutes()}`;
         const dataString = `${dataValidada.getDate()}/${dataValidada.getMonth()+1} às ${horaArredondada}`;
@@ -525,23 +537,24 @@ client.on('message_create', async (message) => {
             if (err) return await message.reply('❌ Erro ao salvar no banco. Tente novamente.');
             
             sessoes[chatId].etapa = 'menu';
-            await message.reply(`✅ *Sucesso, ${sessoes[chatId].nome}!*\n\nSeu horário para *${sessoes[chatId].servicoSelecionado.nome}* está garantido para *${dataString}*.\n\nVocê receberá lembretes automáticos.\n_(Se precisar desmarcar depois, basta digitar *cancelar*)_`);
+            await message.reply(`✅ *Sucesso, ${sessoes[chatId].nome}!*\n\nSeu horário para *${sessoes[chatId].servicoSelecionado.nome}* está garantido para *${dataString}*.\n\nVocê receberá lembretes automáticos.\n_(Se precisar desmarcar, digite *cancelar*)_`);
             
             try {
                 const contatoCliente = await message.getContact();
                 const numeroReal = contatoCliente.number ? `${contatoCliente.number}` : chatId.replace('@c.us', '').replace('@lid', '');
-
-                const avisoDono = `🔔 *NOVO AGENDAMENTO!*\n\n👤 *Cliente:* ${sessoes[chatId].nome}\n📞 *Contato:* ${numeroReal}\n✂️ *Serviço:* ${sessoes[chatId].servicoSelecionado.nome}\n📅 *Data/Hora:* ${dataString}`;
-                await client.sendMessage(NUMERO_ADMIN, avisoDono);
+                await client.sendMessage(NUMERO_ADMIN, `🔔 *NOVO AGENDAMENTO!*\n\n👤 *Cliente:* ${sessoes[chatId].nome}\n📞 *Contato:* ${numeroReal}\n✂️ *Serviço:* ${sessoes[chatId].servicoSelecionado.nome}\n📅 *Data/Hora:* ${dataString}`);
             } catch (e) {}
         });
     }
-    // NOVO BLOCO: Mostrando a lista de horários disponíveis
     else if (etapaAtual === 'consultando_vagas') {
         const dataAlvo = converterDataDia(texto);
-        if (!dataAlvo) {
-            await message.reply('⚠️ Não consegui entender a data. Tente algo como "amanhã", "hoje", "dia 25" ou "mes que vem dia 28".');
-            return;
+        if (!dataAlvo) return await message.reply('⚠️ Não consegui entender a data. Tente algo como "amanhã", "hoje", ou "dia 25".');
+
+        const horarioFunc = obterHorarioFuncionamento(dataAlvo);
+        const dataString = `${dataAlvo.getDate()}/${dataAlvo.getMonth()+1}`;
+
+        if (!horarioFunc) {
+            return await message.reply(`📅 *Vagas para o dia ${dataString}*\n\nNós não abrimos neste dia da semana (Domingo/Segunda). 😕\nDigite outra data (ou *voltar* para sair):`);
         }
 
         const inicioDia = new Date(dataAlvo.getFullYear(), dataAlvo.getMonth(), dataAlvo.getDate(), 0, 0, 0).toISOString();
@@ -549,9 +562,10 @@ client.on('message_create', async (message) => {
 
         db.all("SELECT * FROM agendamentos WHERE data_iso >= ? AND data_iso <= ?", [inicioDia, fimDia], async (err, rows) => {
             const horariosPossiveis = [];
-            // Monta os horários das 09h às 19h (de 30 em 30 min)
-            for(let h = 9; h <= 18; h++) {
-                if (h === 12) continue; // Pula o almoço das 12h
+            
+            // Aqui o loop constrói a lista com base no dia da semana correto!
+            for(let h = horarioFunc.inicio; h < horarioFunc.fim; h++) {
+                if (h === 12) continue; // Pula o almoço
                 horariosPossiveis.push(`${h.toString().padStart(2, '0')}:00`);
                 horariosPossiveis.push(`${h.toString().padStart(2, '0')}:30`);
             }
@@ -559,30 +573,25 @@ client.on('message_create', async (message) => {
             const livres = horariosPossiveis.filter(horaStr => {
                 const [h, m] = horaStr.split(':').map(Number);
                 const dataTest = new Date(dataAlvo.getFullYear(), dataAlvo.getMonth(), dataAlvo.getDate(), h, m, 0);
-                const dataTestFim = new Date(dataTest.getTime() + 30 * 60000); // testa janela básica de 30 min
+                const dataTestFim = new Date(dataTest.getTime() + 30 * 60000); 
                 
                 for (let row of rows) {
                     const rowInicio = new Date(row.data_iso);
                     const rowFim = new Date(row.data_fim_iso);
-                    // Se o horário bater no meio de um atendimento longo (como o corte de 1h), ele bloqueia!
                     if ((dataTest < rowFim && dataTestFim > rowInicio) || (dataTest >= rowInicio && dataTest < rowFim)) {
                         return false; 
                     }
                 }
-                // Tira horários que já passaram se for hoje
                 if (dataTest < new Date()) return false;
-
                 return true;
             });
 
-            const dataString = `${dataAlvo.getDate()}/${dataAlvo.getMonth()+1}`;
-            
             if (livres.length === 0) {
-                await message.reply(`📅 *Vagas para o dia ${dataString}*\n\nInfelizmente nossa agenda está 100% lotada (ou fechada) neste dia. 😕\nQuer tentar ver para o dia seguinte? Digite a nova data (ou *voltar* para sair):`);
+                await message.reply(`📅 *Vagas para o dia ${dataString}*\n\nInfelizmente nossa agenda está 100% lotada neste dia. 😕\nQuer tentar ver para o dia seguinte? Digite a nova data (ou *voltar* para sair):`);
             } else {
                 let listaTexto = livres.join(' | ');
-                await message.reply(`📅 *Vagas para o dia ${dataString}*\n\nTemos estes horários livres para agendar:\n\n🕒 ${listaTexto}\n\n_(Para marcar, digite *1* e escolha seu serviço)_`);
-                sessoes[chatId].etapa = 'menu'; // Volta pro menu para ele já agendar
+                await message.reply(`📅 *Vagas para o dia ${dataString}*\n\nFuncionamos hoje das ${horarioFunc.inicio}h às ${horarioFunc.fim}h.\nTemos estes horários livres:\n\n🕒 ${listaTexto}\n\n_(Para marcar, digite *1* e escolha seu serviço)_`);
+                sessoes[chatId].etapa = 'menu'; 
             }
         });
     }
@@ -597,7 +606,7 @@ async function enviarMenu(message, nome) {
         `*3* 📍 - Nossa Localização\n` +
         `*4* 📸 - Nosso Instagram\n` +
         `*5* 🗑️ - Cancelar meu Agendamento\n` +
-        `*6* 🕒 - Ver Horários Livres\n\n` + // Nova opção inserida aqui!
+        `*6* 🕒 - Ver Horários Livres\n\n` + 
         `_Dica: Se quiser deixar pago, é só digitar *Pix*._`
     );
 }
