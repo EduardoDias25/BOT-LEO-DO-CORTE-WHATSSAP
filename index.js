@@ -3,7 +3,9 @@ const os = require('os');
 const sqlite3 = require('sqlite3').verbose();
 const cron = require('node-cron');
 
-// Configurações do Sistema
+// ==========================================
+// CONFIGURAÇÕES DO SISTEMA
+// ==========================================
 const NUMERO_SALAO = '5531999999999'; 
 const NUMERO_ADMIN = '179778875347010@lid'; // Seu ID de Admin
 const CHAVE_PIX = '31999999999'; 
@@ -31,8 +33,9 @@ const client = new Client({
 
 const sessoes = {};
 let salaoFechado = { ativo: false, retorno: '' }; 
+const agradecimentosEnviados = new Set(); // Memória para não mandar spam pós-corte
 
-// Catálogo de Serviços com Valores para o Relatório Financeiro e Tempo de Cadeira
+// Catálogo de Serviços (Tempo de Cadeira e Financeiro)
 const SERVICOS = {
     '1': { nome: 'Corte', duracao: 60, preco: 'R$ 35', valorBase: 35 }, 
     '2': { nome: 'Barba', duracao: 40, preco: 'R$ 30', valorBase: 30 }, 
@@ -51,7 +54,10 @@ client.on('qr', async () => {
     }
 });
 
-// Cérebro do Calendário do Leo Du Corte
+// ==========================================
+// CÉREBRO E INTELIGÊNCIA DO BOT
+// ==========================================
+
 function obterHorarioFuncionamento(data) {
     const diaSemana = data.getDay(); 
     let inicio = 0, fim = 0;
@@ -68,7 +74,7 @@ function obterHorarioFuncionamento(data) {
     return { inicio, fim };
 }
 
-// Inteligência de Datas Completa
+// Inteligência de Datas (Para marcar horário)
 function converterData(texto) {
     let textoFormatado = texto.toLowerCase().trim();
     const agora = new Date();
@@ -80,8 +86,11 @@ function converterData(texto) {
 
     const matchExato = textoFormatado.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{1,2})$/);
     const meses = {'janeiro': 0, 'fevereiro': 1, 'março': 2, 'marco': 2, 'abril': 3, 'maio': 4, 'junho': 5, 'julho': 6, 'agosto': 7, 'setembro': 8, 'outubro': 9, 'novembro': 10, 'dezembro': 11};
+    const diasSemanaMap = {'domingo': 0, 'segunda': 1, 'terça': 2, 'terca': 2, 'quarta': 3, 'quinta': 4, 'sexta': 5, 'sábado': 6, 'sabado': 6};
+
     const matchTexto = textoFormatado.match(/(\d{1,2})\s*(?:de)?\s*([a-zç]+)\s*(?:as|às|as)\s*(\d{1,2})(?:h|:| e )?(\d{1,2})?/i);
     const matchRelativo = textoFormatado.match(/(hoje|amanhã|amanha)\s*(?:as|às|as)\s*(\d{1,2})(?:h|:| e )?(\d{1,2})?/i);
+    const matchDiaSemana = textoFormatado.match(/(domingo|segunda|ter[çc]a|quarta|quinta|sexta|s[aá]bado).*?(?:as|às|as)\s*(\d{1,2})(?:h|:| e )?(\d{1,2})?/i);
     const matchDireto = textoFormatado.match(/(?:dia\s*)?(\d{1,2})\s*(?:as|às|as)\s*(\d{1,2})(?:h|:| e )?(\d{1,2})?/i);
 
     if (matchExato) {
@@ -92,6 +101,12 @@ function converterData(texto) {
         let diaAlvo = agora.getDate();
         if (matchRelativo[1] === 'amanhã' || matchRelativo[1] === 'amanha') diaAlvo += 1;
         dataCalculada = new Date(anoAtual, mesAtual, diaAlvo, parseInt(matchRelativo[2]), matchRelativo[3] ? parseInt(matchRelativo[3]) : 0);
+    } else if (matchDiaSemana && diasSemanaMap[matchDiaSemana[1]] !== undefined) {
+        let diaAlvoInt = diasSemanaMap[matchDiaSemana[1]];
+        let diaAtualInt = agora.getDay();
+        let diff = diaAlvoInt - diaAtualInt;
+        if (diff < 0) diff += 7; 
+        dataCalculada = new Date(anoAtual, mesAtual, agora.getDate() + diff, parseInt(matchDiaSemana[2]), matchDiaSemana[3] ? parseInt(matchDiaSemana[3]) : 0);
     } else if (matchDireto) {
         let diaMarcado = parseInt(matchDireto[1]);
         let mesAlvo = mesAtual;
@@ -111,7 +126,7 @@ function converterData(texto) {
     return null;
 }
 
-// Inteligência para Dia Específico (Vagas)
+// Inteligência de Datas (Para buscar vagas livres em dia específico)
 function converterDataDia(texto) {
     let textoFormatado = texto.toLowerCase().trim();
     let agora = new Date();
@@ -119,11 +134,14 @@ function converterDataDia(texto) {
     let mesAtual = agora.getMonth(); 
     let dataCalculada = null;
 
+    const meses = {'janeiro': 0, 'fevereiro': 1, 'março': 2, 'marco': 2, 'abril': 3, 'maio': 4, 'junho': 5, 'julho': 6, 'agosto': 7, 'setembro': 8, 'outubro': 9, 'novembro': 10, 'dezembro': 11};
+    const diasSemanaMap = {'domingo': 0, 'segunda': 1, 'terça': 2, 'terca': 2, 'quarta': 3, 'quinta': 4, 'sexta': 5, 'sábado': 6, 'sabado': 6};
+
     const matchMesQueVem = textoFormatado.match(/m[eê]s q(?:ue)? vem dia (\d{1,2})/i);
     const matchExato = textoFormatado.match(/^(\d{1,2})\/(\d{1,2})/);
-    const meses = {'janeiro': 0, 'fevereiro': 1, 'março': 2, 'marco': 2, 'abril': 3, 'maio': 4, 'junho': 5, 'julho': 6, 'agosto': 7, 'setembro': 8, 'outubro': 9, 'novembro': 10, 'dezembro': 11};
     const matchTexto = textoFormatado.match(/(\d{1,2})\s*(?:de)?\s*([a-zç]+)/i);
     const matchRelativo = textoFormatado.match(/(hoje|amanhã|amanha)/i);
+    const matchDiaSemana = textoFormatado.match(/(domingo|segunda|ter[çc]a|quarta|quinta|sexta|s[aá]bado)/i);
     const matchDireto = textoFormatado.match(/(?:dia\s*)?(\d{1,2})/i);
 
     if (matchMesQueVem) {
@@ -138,6 +156,12 @@ function converterDataDia(texto) {
         let diaAlvo = agora.getDate();
         if (matchRelativo[1] === 'amanhã' || matchRelativo[1] === 'amanha') diaAlvo += 1;
         dataCalculada = new Date(anoAtual, mesAtual, diaAlvo, 0, 0, 0);
+    } else if (matchDiaSemana && diasSemanaMap[matchDiaSemana[1]] !== undefined) {
+        let diaAlvoInt = diasSemanaMap[matchDiaSemana[1]];
+        let diaAtualInt = agora.getDay();
+        let diff = diaAlvoInt - diaAtualInt;
+        if (diff < 0) diff += 7; 
+        dataCalculada = new Date(anoAtual, mesAtual, agora.getDate() + diff, 0, 0, 0);
     } else if (matchDireto) {
         let diaMarcado = parseInt(matchDireto[1]);
         let mesAlvo = mesAtual;
@@ -164,7 +188,7 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
 client.on('ready', () => {
     console.log('🔴🔵 Sistema Leo bot online e Operacional 100%!');
 
-    // Disparo de lembretes automáticos às 08h
+    // 1. Disparo de lembretes automáticos às 08h da manhã
     cron.schedule('0 8 * * *', () => {
         db.all("SELECT telefone, nome, data_hora, data_iso FROM agendamentos", [], async (err, rows) => {
             if (err) return;
@@ -183,12 +207,50 @@ client.on('ready', () => {
             }
         });
     });
+
+    // 2. SISTEMA DE AGRADECIMENTO PÓS-CORTE (Checa a cada 1 minuto)
+    cron.schedule('* * * * *', () => { 
+        const agora = new Date();
+        const agoraIso = agora.toISOString();
+
+        db.all("SELECT id, telefone, nome, data_fim_iso FROM agendamentos WHERE data_fim_iso <= ?", [agoraIso], async (err, rows) => {
+            if (err) return;
+            
+            for (const row of rows) {
+                if (row.telefone === 'manual_admin') continue; 
+
+                const tempoFim = new Date(row.data_fim_iso);
+                const minutosPassados = (agora.getTime() - tempoFim.getTime()) / 60000;
+
+                // Envia a mensagem apenas uma vez entre 0 e 3 minutos após o término do serviço
+                if (minutosPassados >= 0 && minutosPassados <= 3 && !agradecimentosEnviados.has(row.id)) {
+                    agradecimentosEnviados.add(row.id); 
+                    
+                    const msgAgradecimento = `🔴 *Leo Du Corte* 🔵\n\nSatisfação total pela preferência, ${row.nome}! Muito obrigado pela moral de sempre. 🙏\n\nAproveita e já segue a gente lá no Insta pra dar aquela força e acompanhar os cortes na régua:\n👉 https://www.instagram.com/leoducorteofc_01/\n\nTmj, meu parceiro, e até a próxima! ✂️🔥`;
+                    
+                    try {
+                        // Manda a mensagem
+                        await client.sendMessage(row.telefone, msgAgradecimento);
+                        
+                        // Reinicia o status do cliente para quando ele mandar mensagem novamente
+                        if (sessoes[row.telefone]) {
+                            sessoes[row.telefone].etapa = 'inicio';
+                        }
+                    } catch(e) {}
+                }
+            }
+        });
+    });
 });
+
+// ==========================================
+// TRATAMENTO DE MENSAGENS
+// ==========================================
 
 client.on('message_create', async (message) => {
     const texto = message.body.toLowerCase();
     
-    // MÁGICA 1: O TRUQUE INVISÍVEL
+    // MÁGICA 1: O TRUQUE INVISÍVEL (Transbordo Humano)
     if (message.fromMe) {
         const chatIdAlvo = message.to; 
         const textoLimpo = texto.trim();
@@ -224,7 +286,7 @@ client.on('message_create', async (message) => {
         return; 
     }
 
-    // A TRAVA DE SILÊNCIO
+    // A TRAVA DE SILÊNCIO (Quando o dono assume)
     if (sessoes[chatId] && sessoes[chatId].pausado) {
         return; 
     }
@@ -241,12 +303,14 @@ client.on('message_create', async (message) => {
         return;
     }
 
-    // BLOCO ADMINISTRATIVO
+    // ==========================================
+    // BLOCO ADMINISTRATIVO (Só o Dono acessa)
+    // ==========================================
     if (chatId === NUMERO_ADMIN) {
         
-        // RELATÓRIOS FINANCEIROS
-        if (texto.startsWith('!relatorio')) {
-            const periodo = texto.replace('!relatorio', '').trim() || 'hoje';
+        // 📊 RELATÓRIOS FINANCEIROS (Aceita com e sem acento)
+        if (texto.startsWith('!relatorio') || texto.startsWith('!relatório')) {
+            const periodo = texto.replace(/!relat[oó]rio/, '').trim() || 'hoje';
             const agora = new Date();
             let inicio, fim, titulo;
 
@@ -402,7 +466,7 @@ client.on('message_create', async (message) => {
             return;
         }
         
-        // NOVO !ADICIONAR: ACEITA NOME OU NÚMERO
+        // !ADICIONAR: ACEITA NOME OU NÚMERO
         if (texto.startsWith('!adicionar ')) {
             const conteudo = message.body.replace('!adicionar', '').trim();
             const partes = conteudo.split('|').map(p => p.trim());
@@ -448,7 +512,6 @@ client.on('message_create', async (message) => {
             const horaFormatada = `${dataValidada.getHours()}h${dataValidada.getMinutes()===0?'00':dataValidada.getMinutes()}`;
             const dataString = `${dataValidada.getDate()}/${dataValidada.getMonth()+1} às ${horaFormatada}`;
 
-            // Aqui ele salva como se fosse manual_admin
             db.run(`INSERT INTO agendamentos (telefone, nome, servico, data_hora, data_iso, data_fim_iso) VALUES (?, ?, ?, ?, ?, ?)`, 
             ['manual_admin', nomeCliente, servicoObj.nome, dataString, dataValidada.toISOString(), dataFim.toISOString()], async (err) => {
                 if (err) return await message.reply('❌ Erro ao salvar agendamento manual.');
@@ -458,7 +521,10 @@ client.on('message_create', async (message) => {
         }
     }
 
+    // ==========================================
     // INTERAÇÃO COM O CLIENTE NORMAL
+    // ==========================================
+    
     if (texto === 'pix' || texto === 'pagar' || texto === 'pagamento') {
         await message.reply(`💸 *Área de Pagamento*\n\nNossa Chave Pix (Celular):\n*${CHAVE_PIX}*\nNome: ${NOME_PIX}\n\nObrigado pela preferência!`);
         return;
@@ -528,7 +594,7 @@ client.on('message_create', async (message) => {
 
         if (texto === '6' || texto.includes('horários livres') || texto.includes('vagas') || texto.includes('horario disponivel') || texto.includes('quais horarios')) {
             sessoes[chatId].etapa = 'consultando_vagas';
-            return await message.reply(`🕒 Para qual dia você gostaria de ver nossas vagas?\n\n_(Exemplo: amanhã, dia 27, pro mes que vem dia 28)_`);
+            return await message.reply(`🕒 Para qual dia você gostaria de ver nossas vagas?\n\n_(Exemplo: amanhã, sexta feira, pro mes que vem dia 28)_`);
         }
 
         let servicoDireto = null;
@@ -540,7 +606,7 @@ client.on('message_create', async (message) => {
         if (servicoDireto) {
             sessoes[chatId].servicoSelecionado = servicoDireto;
             sessoes[chatId].etapa = 'escolhendo_horario';
-            return await message.reply(`Show! Escolheu *${servicoDireto.nome}* (${servicoDireto.preco}). 💈\n\nAgora digite a data e o horário desejado (Ex: *amanhã às 15h* ou *25 às 16:30*):`);
+            return await message.reply(`Show! Escolheu *${servicoDireto.nome}* (${servicoDireto.preco}). 💈\n\nAgora digite a data e o horário desejado (Ex: *amanhã às 15h* ou *sexta às 16:30*):`);
         }
 
         if (texto === '1' || texto === 'agendar' || texto === 'marcar') {
@@ -564,14 +630,14 @@ client.on('message_create', async (message) => {
         if (SERVICOS[texto]) {
             sessoes[chatId].servicoSelecionado = SERVICOS[texto];
             sessoes[chatId].etapa = 'escolhendo_horario';
-            await message.reply(`Ótima escolha! 💈\n\nAgora digite a data e o horário (Ex: *amanhã às 15h* ou *25 às 16:30*):`);
+            await message.reply(`Ótima escolha! 💈\n\nAgora digite a data e o horário (Ex: *amanhã às 15h* ou *sexta às 16:30*):`);
         } else {
             await message.reply('⚠️ Por favor, escolha um número de 1 a 4 para o serviço.');
         }
     }
     else if (etapaAtual === 'escolhendo_horario') {
         const dataValidada = converterData(texto);
-        if (!dataValidada) return await message.reply('⚠️ Não consegui entender. Tente usar formatos mais diretos como "hoje as 15" ou "amanha as 10":');
+        if (!dataValidada) return await message.reply('⚠️ Não consegui entender. Tente usar formatos mais diretos como "hoje as 15" ou "quinta as 10":');
 
         const horarioFunc = obterHorarioFuncionamento(dataValidada);
         if (!horarioFunc) return await message.reply('⛔ Nós não abrimos neste dia da semana (Domingo ou Segunda-feira). Por favor, escolha outro dia.');
@@ -591,7 +657,6 @@ client.on('message_create', async (message) => {
         const horaArredondada = `${dataValidada.getHours()}h${dataValidada.getMinutes()===0?'00':dataValidada.getMinutes()}`;
         const dataString = `${dataValidada.getDate()}/${dataValidada.getMonth()+1} às ${horaArredondada}`;
 
-        // O chatId AQUI é o telefone do cliente, que será salvo com o formato 55319XXXXXXXX@c.us
         db.run(`INSERT INTO agendamentos (telefone, nome, servico, data_hora, data_iso, data_fim_iso) VALUES (?, ?, ?, ?, ?, ?)`, 
         [chatId, sessoes[chatId].nome, sessoes[chatId].servicoSelecionado.nome, dataString, dataValidada.toISOString(), dataFim.toISOString()], async (err) => {
             if (err) return await message.reply('❌ Erro ao salvar no banco. Tente novamente.');
@@ -600,7 +665,6 @@ client.on('message_create', async (message) => {
             await message.reply(`✅ *Sucesso, ${sessoes[chatId].nome}!*\n\nSeu horário para *${sessoes[chatId].servicoSelecionado.nome}* está garantido para *${dataString}*.\n\nVocê receberá lembretes automáticos.\n_(Se precisar desmarcar, digite *cancelar*)_`);
             
             try {
-                // Aqui o bot extrai apenas os números e manda para você
                 const contatoCliente = await message.getContact();
                 const numeroReal = contatoCliente.number ? `${contatoCliente.number}` : chatId.replace('@c.us', '').replace('@lid', '');
                 await client.sendMessage(NUMERO_ADMIN, `🔔 *NOVO AGENDAMENTO!*\n\n👤 *Cliente:* ${sessoes[chatId].nome}\n📞 *Contato:* ${numeroReal}\n✂️ *Serviço:* ${sessoes[chatId].servicoSelecionado.nome}\n📅 *Data/Hora:* ${dataString}`);
@@ -609,7 +673,7 @@ client.on('message_create', async (message) => {
     }
     else if (etapaAtual === 'consultando_vagas') {
         const dataAlvo = converterDataDia(texto);
-        if (!dataAlvo) return await message.reply('⚠️ Não consegui entender a data. Tente algo como "amanhã", "hoje", ou "dia 25".');
+        if (!dataAlvo) return await message.reply('⚠️ Não consegui entender a data. Tente algo como "amanhã", "quinta", ou "dia 25".');
 
         const horarioFunc = obterHorarioFuncionamento(dataAlvo);
         const dataString = `${dataAlvo.getDate()}/${dataAlvo.getMonth()+1}`;
