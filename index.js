@@ -5,7 +5,7 @@ const cron = require('node-cron');
 
 // Configurações do Sistema
 const NUMERO_SALAO = '5531999999999'; 
-const NUMERO_ADMIN = '179778875347010@lid'; 
+const NUMERO_ADMIN = '179778875347010@lid'; // Seu ID de Admin
 const CHAVE_PIX = '31999999999'; 
 const NOME_PIX = 'Leonardo - Leo Du Corte';
 
@@ -32,7 +32,7 @@ const client = new Client({
 const sessoes = {};
 let salaoFechado = { ativo: false, retorno: '' }; 
 
-// Catálogo de Serviços com Valores Matemáticos para o Relatório
+// Catálogo de Serviços com Valores para o Relatório Financeiro e Tempo de Cadeira
 const SERVICOS = {
     '1': { nome: 'Corte', duracao: 60, preco: 'R$ 35', valorBase: 35 }, 
     '2': { nome: 'Barba', duracao: 40, preco: 'R$ 30', valorBase: 30 }, 
@@ -63,7 +63,7 @@ function obterHorarioFuncionamento(data) {
     } else if (diaSemana === 6) { // Sábado
         inicio = 9; fim = 18;
     } else {
-        return null; // Domingo e Segunda
+        return null; // Domingo e Segunda fechado
     }
     return { inicio, fim };
 }
@@ -111,6 +111,7 @@ function converterData(texto) {
     return null;
 }
 
+// Inteligência para Dia Específico (Vagas)
 function converterDataDia(texto) {
     let textoFormatado = texto.toLowerCase().trim();
     let agora = new Date();
@@ -161,7 +162,7 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
 }
 
 client.on('ready', () => {
-    console.log('🔴🔵 Sistema Leo bot online! Gestão Financeira Ativada.');
+    console.log('🔴🔵 Sistema Leo bot online e Operacional 100%!');
 
     // Disparo de lembretes automáticos às 08h
     cron.schedule('0 8 * * *', () => {
@@ -240,10 +241,10 @@ client.on('message_create', async (message) => {
         return;
     }
 
-    // BLOCO ADMINISTRATIVO (Gestão Financeira e Grade)
+    // BLOCO ADMINISTRATIVO
     if (chatId === NUMERO_ADMIN) {
         
-        // 📊 NOVO: COMANDO DE RELATÓRIO FINANCEIRO
+        // RELATÓRIOS FINANCEIROS
         if (texto.startsWith('!relatorio')) {
             const periodo = texto.replace('!relatorio', '').trim() || 'hoje';
             const agora = new Date();
@@ -255,7 +256,7 @@ client.on('message_create', async (message) => {
                 titulo = 'MÊS ATUAL';
             } else if (periodo === 'semana') {
                 const diaSemana = agora.getDay();
-                const diff = agora.getDate() - diaSemana + (diaSemana === 0 ? -6 : 1); // Ajusta pra segunda-feira
+                const diff = agora.getDate() - diaSemana + (diaSemana === 0 ? -6 : 1); 
                 const segunda = new Date(agora.setDate(diff));
                 inicio = new Date(segunda.getFullYear(), segunda.getMonth(), segunda.getDate(), 0, 0, 0).toISOString();
                 fim = new Date(segunda.getFullYear(), segunda.getMonth(), segunda.getDate() + 6, 23, 59, 59).toISOString();
@@ -281,19 +282,15 @@ client.on('message_create', async (message) => {
                     else if (r.servico === 'Química / Platinado') valor = SERVICOS['4'].valorBase;
 
                     totalCaixa += valor;
-
-                    // Checa se o horário já passou (Concluído) ou se ainda vai acontecer
                     if (new Date(r.data_iso) < new Date()) concluidos++;
                     else pendentes++;
                 });
 
                 let msg = `📊 *BALANÇO - ${titulo}* 📊\n\n`;
-                msg += `💰 *Faturamento Total:* R$ ${totalCaixa.toFixed(2).replace('.', ',')}\n\n`;
+                msg += `💰 *Faturamento:* R$ ${totalCaixa.toFixed(2).replace('.', ',')}\n\n`;
                 msg += `✂️ *Total de Atendimentos:* ${rows.length}\n`;
                 msg += `✅ *Já realizados:* ${concluidos}\n`;
-                msg += `⏳ *Aguardando cliente:* ${pendentes}\n\n`;
-                msg += `_(Lembrete: Se um cliente faltar, use o comando !apagar ID para ele não contar no faturamento)_`;
-
+                msg += `⏳ *Aguardando:* ${pendentes}\n`;
                 await message.reply(msg);
             });
             return;
@@ -347,18 +344,17 @@ client.on('message_create', async (message) => {
             });
             return;
         }
-        // Faxina manual foi mantida caso você queira zerar o banco um dia
         if (texto === '!limpar') {
             const agoraLimpar = new Date().toISOString();
             db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agoraLimpar], function(err) {
-                message.reply(`🧹 *Limpeza manual concluída!*\n${this.changes} agendamentos passados foram excluídos (Isto afeta relatórios financeiros do passado).`);
+                message.reply(`🧹 *Limpeza manual concluída!*\n${this.changes} agendamentos passados foram excluídos.`);
             });
             return;
         }
         if (texto.startsWith('!apagar ')) {
             const id = texto.split(' ')[1];
             db.run(`DELETE FROM agendamentos WHERE id = ?`, [id], function(err) {
-                message.reply(`✅ Agendamento ID ${id} cancelado/removido do sistema.`);
+                message.reply(`✅ Agendamento ID ${id} removido.`);
             });
             return;
         }
@@ -405,21 +401,34 @@ client.on('message_create', async (message) => {
             });
             return;
         }
+        
+        // NOVO !ADICIONAR: ACEITA NOME OU NÚMERO
         if (texto.startsWith('!adicionar ')) {
             const conteudo = message.body.replace('!adicionar', '').trim();
             const partes = conteudo.split('|').map(p => p.trim());
 
-            if (partes.length < 3) return await message.reply('⚠️ Formato inválido.\nUse: *!adicionar Nome | Num do Serviço (1-4) | Data*');
+            if (partes.length < 3) return await message.reply('⚠️ Formato inválido.\nUse: *!adicionar Nome | Serviço (Ex: 1 ou Corte) | Data*');
 
             const nomeCliente = partes[0];
-            const numServico = partes[1];
+            const nomeServicoDigitado = partes[1].toLowerCase();
             const textoData = partes.slice(2).join(' ');
 
-            if (!SERVICOS[numServico]) return await message.reply('❌ Número do serviço inválido (1 a 4).');
+            let servicoObj = null;
+            if (SERVICOS[nomeServicoDigitado]) {
+                servicoObj = SERVICOS[nomeServicoDigitado];
+            } else if (nomeServicoDigitado.includes('corte')) {
+                servicoObj = SERVICOS['1'];
+            } else if (nomeServicoDigitado.includes('barba')) {
+                servicoObj = SERVICOS['2'];
+            } else if (nomeServicoDigitado.includes('combo')) {
+                servicoObj = SERVICOS['3'];
+            } else if (nomeServicoDigitado.includes('quimica') || nomeServicoDigitado.includes('química') || nomeServicoDigitado.includes('platinado')) {
+                servicoObj = SERVICOS['4'];
+            }
 
-            const servicoObj = SERVICOS[numServico];
+            if (!servicoObj) return await message.reply('❌ Serviço inválido. Use um número (1 a 4) ou o nome (Corte, Barba, Combo, Química).');
+
             const dataValidada = converterData(textoData);
-
             if (!dataValidada) return await message.reply('⚠️ Não entendi a data.');
             
             const horarioFunc = obterHorarioFuncionamento(dataValidada);
@@ -439,10 +448,11 @@ client.on('message_create', async (message) => {
             const horaFormatada = `${dataValidada.getHours()}h${dataValidada.getMinutes()===0?'00':dataValidada.getMinutes()}`;
             const dataString = `${dataValidada.getDate()}/${dataValidada.getMonth()+1} às ${horaFormatada}`;
 
+            // Aqui ele salva como se fosse manual_admin
             db.run(`INSERT INTO agendamentos (telefone, nome, servico, data_hora, data_iso, data_fim_iso) VALUES (?, ?, ?, ?, ?, ?)`, 
             ['manual_admin', nomeCliente, servicoObj.nome, dataString, dataValidada.toISOString(), dataFim.toISOString()], async (err) => {
                 if (err) return await message.reply('❌ Erro ao salvar agendamento manual.');
-                await message.reply(`✅ *Agendamento Manual Criado!*\n\n👤 Cliente: ${nomeCliente}\n✂️ Serviço: ${servicoObj.nome}\n📅 Data: ${dataString}`);
+                await message.reply(`✅ *Agendamento Manual Criado!*\n\n👤 Cliente: ${nomeCliente}\n✂️ Serviço: ${servicoObj.nome}\n⏱️ Duração base: ${servicoObj.duracao} min\n📅 Data: ${dataString}`);
             });
             return;
         }
@@ -581,6 +591,7 @@ client.on('message_create', async (message) => {
         const horaArredondada = `${dataValidada.getHours()}h${dataValidada.getMinutes()===0?'00':dataValidada.getMinutes()}`;
         const dataString = `${dataValidada.getDate()}/${dataValidada.getMonth()+1} às ${horaArredondada}`;
 
+        // O chatId AQUI é o telefone do cliente, que será salvo com o formato 55319XXXXXXXX@c.us
         db.run(`INSERT INTO agendamentos (telefone, nome, servico, data_hora, data_iso, data_fim_iso) VALUES (?, ?, ?, ?, ?, ?)`, 
         [chatId, sessoes[chatId].nome, sessoes[chatId].servicoSelecionado.nome, dataString, dataValidada.toISOString(), dataFim.toISOString()], async (err) => {
             if (err) return await message.reply('❌ Erro ao salvar no banco. Tente novamente.');
@@ -589,6 +600,7 @@ client.on('message_create', async (message) => {
             await message.reply(`✅ *Sucesso, ${sessoes[chatId].nome}!*\n\nSeu horário para *${sessoes[chatId].servicoSelecionado.nome}* está garantido para *${dataString}*.\n\nVocê receberá lembretes automáticos.\n_(Se precisar desmarcar, digite *cancelar*)_`);
             
             try {
+                // Aqui o bot extrai apenas os números e manda para você
                 const contatoCliente = await message.getContact();
                 const numeroReal = contatoCliente.number ? `${contatoCliente.number}` : chatId.replace('@c.us', '').replace('@lid', '');
                 await client.sendMessage(NUMERO_ADMIN, `🔔 *NOVO AGENDAMENTO!*\n\n👤 *Cliente:* ${sessoes[chatId].nome}\n📞 *Contato:* ${numeroReal}\n✂️ *Serviço:* ${sessoes[chatId].servicoSelecionado.nome}\n📅 *Data/Hora:* ${dataString}`);
