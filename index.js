@@ -32,12 +32,12 @@ const client = new Client({
 const sessoes = {};
 let salaoFechado = { ativo: false, retorno: '' }; 
 
-// Catálogo de Serviços
+// Catálogo de Serviços com Valores Matemáticos para o Relatório
 const SERVICOS = {
-    '1': { nome: 'Corte', duracao: 60, preco: 'R$ 35' }, 
-    '2': { nome: 'Barba', duracao: 40, preco: 'R$ 30' }, 
-    '3': { nome: 'COMBO (Corte, Barba, Sobrancelha)', duracao: 60, preco: 'R$ 68' },
-    '4': { nome: 'Química / Platinado', duracao: 120, preco: 'A partir de R$ 60' }
+    '1': { nome: 'Corte', duracao: 60, preco: 'R$ 35', valorBase: 35 }, 
+    '2': { nome: 'Barba', duracao: 40, preco: 'R$ 30', valorBase: 30 }, 
+    '3': { nome: 'COMBO (Corte, Barba, Sobrancelha)', duracao: 60, preco: 'R$ 68', valorBase: 68 },
+    '4': { nome: 'Química / Platinado', duracao: 120, preco: 'A partir de R$ 60', valorBase: 60 }
 };
 
 client.on('qr', async () => {
@@ -51,9 +51,9 @@ client.on('qr', async () => {
     }
 });
 
-// NOVA FUNÇÃO: O Cérebro do Calendário do Leo Du Corte
+// Cérebro do Calendário do Leo Du Corte
 function obterHorarioFuncionamento(data) {
-    const diaSemana = data.getDay(); // 0=Dom, 1=Seg, 2=Ter, 3=Qua, 4=Qui, 5=Sex, 6=Sáb
+    const diaSemana = data.getDay(); 
     let inicio = 0, fim = 0;
     
     if (diaSemana >= 2 && diaSemana <= 4) { // Terça a Quinta
@@ -63,7 +63,7 @@ function obterHorarioFuncionamento(data) {
     } else if (diaSemana === 6) { // Sábado
         inicio = 9; fim = 18;
     } else {
-        return null; // Domingo (0) e Segunda (1) está FECHADO
+        return null; // Domingo e Segunda
     }
     return { inicio, fim };
 }
@@ -161,18 +161,9 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
 }
 
 client.on('ready', () => {
-    console.log('🔴🔵 Sistema Leo bot online! Caleńdario Dinâmico Ativado (Horários Flexíveis).');
+    console.log('🔴🔵 Sistema Leo bot online! Gestão Financeira Ativada.');
 
-    const agoraInit = new Date().toISOString();
-    db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agoraInit], function(err) {
-        if (!err && this.changes > 0) console.log(`🧹 Faxina de inicialização: ${this.changes} horários apagados.`);
-    });
-
-    cron.schedule('0 0 * * *', () => {
-        const agoraMeiaNoite = new Date().toISOString();
-        db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agoraMeiaNoite]);
-    });
-
+    // Disparo de lembretes automáticos às 08h
     cron.schedule('0 8 * * *', () => {
         db.all("SELECT telefone, nome, data_hora, data_iso FROM agendamentos", [], async (err, rows) => {
             if (err) return;
@@ -249,12 +240,69 @@ client.on('message_create', async (message) => {
         return;
     }
 
-    // BLOCO ADMINISTRATIVO
+    // BLOCO ADMINISTRATIVO (Gestão Financeira e Grade)
     if (chatId === NUMERO_ADMIN) {
+        
+        // 📊 NOVO: COMANDO DE RELATÓRIO FINANCEIRO
+        if (texto.startsWith('!relatorio')) {
+            const periodo = texto.replace('!relatorio', '').trim() || 'hoje';
+            const agora = new Date();
+            let inicio, fim, titulo;
+
+            if (periodo === 'mes' || periodo === 'mês') {
+                inicio = new Date(agora.getFullYear(), agora.getMonth(), 1).toISOString();
+                fim = new Date(agora.getFullYear(), agora.getMonth() + 1, 0, 23, 59, 59).toISOString();
+                titulo = 'MÊS ATUAL';
+            } else if (periodo === 'semana') {
+                const diaSemana = agora.getDay();
+                const diff = agora.getDate() - diaSemana + (diaSemana === 0 ? -6 : 1); // Ajusta pra segunda-feira
+                const segunda = new Date(agora.setDate(diff));
+                inicio = new Date(segunda.getFullYear(), segunda.getMonth(), segunda.getDate(), 0, 0, 0).toISOString();
+                fim = new Date(segunda.getFullYear(), segunda.getMonth(), segunda.getDate() + 6, 23, 59, 59).toISOString();
+                titulo = 'ESTA SEMANA';
+            } else {
+                inicio = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate(), 0, 0, 0).toISOString();
+                fim = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate(), 23, 59, 59).toISOString();
+                titulo = 'HOJE';
+            }
+
+            db.all("SELECT * FROM agendamentos WHERE data_iso >= ? AND data_iso <= ?", [inicio, fim], async (err, rows) => {
+                if (err) return await message.reply('❌ Erro ao puxar relatório.');
+                
+                let totalCaixa = 0;
+                let concluidos = 0;
+                let pendentes = 0;
+
+                rows.forEach(r => {
+                    let valor = 0;
+                    if (r.servico === 'Corte') valor = SERVICOS['1'].valorBase;
+                    else if (r.servico === 'Barba') valor = SERVICOS['2'].valorBase;
+                    else if (r.servico === 'COMBO (Corte, Barba, Sobrancelha)') valor = SERVICOS['3'].valorBase;
+                    else if (r.servico === 'Química / Platinado') valor = SERVICOS['4'].valorBase;
+
+                    totalCaixa += valor;
+
+                    // Checa se o horário já passou (Concluído) ou se ainda vai acontecer
+                    if (new Date(r.data_iso) < new Date()) concluidos++;
+                    else pendentes++;
+                });
+
+                let msg = `📊 *BALANÇO - ${titulo}* 📊\n\n`;
+                msg += `💰 *Faturamento Total:* R$ ${totalCaixa.toFixed(2).replace('.', ',')}\n\n`;
+                msg += `✂️ *Total de Atendimentos:* ${rows.length}\n`;
+                msg += `✅ *Já realizados:* ${concluidos}\n`;
+                msg += `⏳ *Aguardando cliente:* ${pendentes}\n\n`;
+                msg += `_(Lembrete: Se um cliente faltar, use o comando !apagar ID para ele não contar no faturamento)_`;
+
+                await message.reply(msg);
+            });
+            return;
+        }
+
         if (texto === '!fechar') {
             salaoFechado.ativo = true;
             salaoFechado.retorno = '';
-            await message.reply(`🔒 *Salão Fechado!*\nA partir de agora, o bot avisará aos clientes que o salão está fechado (sem data de retorno definida).`);
+            await message.reply(`🔒 *Salão Fechado!*\nA partir de agora, o bot avisará aos clientes que o salão está fechado.`);
             return;
         }
         if (texto.startsWith('!fechar ')) {
@@ -273,8 +321,8 @@ client.on('message_create', async (message) => {
         if (texto === '!agenda') {
             const agoraAgenda = new Date().toISOString();
             db.all("SELECT * FROM agendamentos WHERE data_fim_iso >= ? ORDER BY data_iso ASC", [agoraAgenda], async (err, rows) => {
-                if (err || rows.length === 0) return await message.reply('Nenhum agendamento futuro encontrado no banco de dados.');
-                let lista = '*📋 AGENDA GERAL:*\n\n';
+                if (err || rows.length === 0) return await message.reply('Nenhum agendamento futuro encontrado.');
+                let lista = '*📋 AGENDA FUTURA:*\n\n';
                 rows.forEach(r => { lista += `ID: ${r.id} | ${r.nome}\nServiço: ${r.servico}\nData/Hora: ${r.data_hora}\n\n`; });
                 await message.reply(lista);
             });
@@ -288,8 +336,8 @@ client.on('message_create', async (message) => {
             const limiteAtual = new Date().toISOString();
             
             db.all("SELECT * FROM agendamentos WHERE data_iso >= ? AND data_iso <= ? AND data_fim_iso >= ? ORDER BY data_iso ASC", [inicio, fim, limiteAtual], async (err, rows) => {
-                if (err || rows.length === 0) return await message.reply('Grade vazia para esta data.');
-                let lista = texto === '!hoje' ? '*📅 AGENDA DE HOJE:*\n\n' : '*📅 AGENDA DE AMANHÃ:*\n\n';
+                if (err || rows.length === 0) return await message.reply('Nenhum agendamento pendente para esta data.');
+                let lista = texto === '!hoje' ? '*📅 PENDENTES DE HOJE:*\n\n' : '*📅 AGENDA DE AMANHÃ:*\n\n';
                 rows.forEach(r => {
                     const hora = new Date(r.data_iso).getHours();
                     const min = new Date(r.data_iso).getMinutes() === 0 ? '00' : new Date(r.data_iso).getMinutes();
@@ -299,17 +347,18 @@ client.on('message_create', async (message) => {
             });
             return;
         }
+        // Faxina manual foi mantida caso você queira zerar o banco um dia
         if (texto === '!limpar') {
             const agoraLimpar = new Date().toISOString();
             db.run(`DELETE FROM agendamentos WHERE data_fim_iso < ?`, [agoraLimpar], function(err) {
-                message.reply(`🧹 *Limpeza manual concluída!*\n${this.changes} agendamentos passados foram removidos.`);
+                message.reply(`🧹 *Limpeza manual concluída!*\n${this.changes} agendamentos passados foram excluídos (Isto afeta relatórios financeiros do passado).`);
             });
             return;
         }
         if (texto.startsWith('!apagar ')) {
             const id = texto.split(' ')[1];
             db.run(`DELETE FROM agendamentos WHERE id = ?`, [id], function(err) {
-                message.reply(`✅ Agendamento ID ${id} cancelado pelo sistema.`);
+                message.reply(`✅ Agendamento ID ${id} cancelado/removido do sistema.`);
             });
             return;
         }
@@ -563,7 +612,6 @@ client.on('message_create', async (message) => {
         db.all("SELECT * FROM agendamentos WHERE data_iso >= ? AND data_iso <= ?", [inicioDia, fimDia], async (err, rows) => {
             const horariosPossiveis = [];
             
-            // Aqui o loop constrói a lista com base no dia da semana correto!
             for(let h = horarioFunc.inicio; h < horarioFunc.fim; h++) {
                 if (h === 12) continue; // Pula o almoço
                 horariosPossiveis.push(`${h.toString().padStart(2, '0')}:00`);
