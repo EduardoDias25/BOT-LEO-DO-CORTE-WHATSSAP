@@ -35,12 +35,12 @@ const sessoes = {};
 let salaoFechado = { ativo: false, retorno: '' }; 
 const agradecimentosEnviados = new Set(); 
 
-// CATÁLOGO DE SERVIÇOS (Apenas serviços de cadeira entram aqui)
+// CATÁLOGO DE SERVIÇOS (Ajustado o Alisamento para 30 min)
 const SERVICOS = {
     '1': { nome: 'Combo (Corte, Rosto, Sobrancelha, Bigode)', duracao: 60, preco: 'R$ 68', valorBase: 68 }, 
     '2': { nome: 'Corte', duracao: 60, preco: 'R$ 35', valorBase: 35 }, 
     '3': { nome: 'Barba', duracao: 40, preco: 'R$ 30', valorBase: 30 }, 
-    '4': { nome: 'Alisamento', duracao: 60, preco: 'R$ 35', valorBase: 35 },
+    '4': { nome: 'Alisamento', duracao: 30, preco: 'R$ 35', valorBase: 35 },
     '5': { nome: 'Luzes', duracao: 120, preco: 'R$ 60', valorBase: 60 },
     '6': { nome: 'Pé acabamento', duracao: 30, preco: 'R$ 15', valorBase: 15 },
     '7': { nome: 'Sobrancelha', duracao: 20, preco: 'R$ 18', valorBase: 18 },
@@ -513,7 +513,7 @@ client.on('message_create', async (message) => {
         return;
     }
 
-    const intencaoCancelar = texto.includes('cancelar') || texto.includes('desmarcar') || texto.includes('deu ruim') || texto === '4';
+    const intencaoCancelar = texto.includes('cancelar') || texto.includes('desmarcar') || texto.includes('deu ruim') || texto === '5';
     if (intencaoCancelar) {
         db.all(`SELECT id, data_hora FROM agendamentos WHERE telefone = ?`, [chatId], async (err, rows) => {
             if (err || rows.length === 0) {
@@ -574,7 +574,7 @@ client.on('message_create', async (message) => {
         }
     } 
     else if (etapaAtual === 'menu') {
-        if (texto.includes('local') || texto.includes('onde fica') || texto === '3') {
+        if (texto.includes('local') || texto.includes('onde fica')) {
             return await message.reply(`📍 *Nossa Localização*\n\nR. Junquilhas, 184\n\n🗺️ *GPS/Uber:*\nhttps://www.google.com/maps/search/?api=1&query=R.+Junquilhas,+184\n\n_(Digite *voltar* para o menu)_`);
         }
 
@@ -589,7 +589,7 @@ client.on('message_create', async (message) => {
         else if (texto.includes('barba')) servicoDireto = SERVICOS['3'];
         else if (texto.includes('alisamento')) servicoDireto = SERVICOS['4'];
         else if (texto.includes('luzes')) servicoDireto = SERVICOS['5'];
-        else if (texto.includes('acabamento') || texto.includes('pé') || texto.includes('pezinho')) servicoDireto = SERVICOS['6'];
+        else if (texto.includes('acabamento') || texto.includes('pé')) servicoDireto = SERVICOS['6'];
         else if (texto.includes('sobrancelha')) servicoDireto = SERVICOS['7'];
         else if (texto.includes('preto')) servicoDireto = SERVICOS['8'];
         else if (texto.includes('color')) servicoDireto = SERVICOS['9'];
@@ -616,7 +616,7 @@ client.on('message_create', async (message) => {
                 `_Digite o número do serviço:_`
             );
         }
-        else if (texto === '2' || texto === 'tabela' || texto === 'preço' || texto === 'preços' || texto === 'valor' || texto === 'valores') {
+        else if (texto === '2' || texto === 'tabela') {
             await message.reply(
                 `🔴 *TABELA DE PREÇOS* 🔵\n\n` +
                 `🔥 *Combo (Corte, Limpa Rosto, Sobrancelha, Bigode)* = R$ 68\n` +
@@ -636,11 +636,14 @@ client.on('message_create', async (message) => {
                 `_(Para agendar serviço, digite *1*)_`
             );
         }
-        else if (texto === '5' || texto.includes('insta')) {
+        else if (texto === '3') {
+            await message.reply(`📍 R. Junquilhas, 184\n\n🗺️ *GPS:* https://www.google.com/maps/search/?api=1&query=R.+Junquilhas,+184\n\n_(Digite *voltar* para retornar)_`);
+        }
+        else if (texto === '4' || texto.includes('insta')) {
             await message.reply(`📸 Nosso Instagram:\n👉 https://www.instagram.com/leoducorteofc_01/\n\n_(Digite *voltar* para retornar)_`);
         }
         else {
-            await message.reply('❌ Opção não encontrada. \n\nVocê pode digitar o nome do que precisa (ex: *corte, pezinho, tabela, agendar*) ou enviar um número de 1 a 6 conforme o menu principal. 👊');
+            await message.reply('❌ Opção não encontrada. Digite um número de 1 a 6.');
         }
     }
     else if (etapaAtual === 'escolhendo_servico') {
@@ -743,8 +746,8 @@ async function enviarMenu(message, nome) {
         `*1* 📅 - Marcar Horário\n` +
         `*2* 💰 - Ver Tabela de Preços\n` +
         `*3* 📍 - Nossa Localização\n` +
-        `*4* 🗑️ - Cancelar meu Agendamento\n` +
-        `*5* 📸 - Nosso Instagram\n` +
+        `*4* 📸 - Nosso Instagram\n` +
+        `*5* 🗑️ - Cancelar meu Agendamento\n` +
         `*6* 🕒 - Ver Horários Livres\n\n` + 
         `_Dica: Se quiser deixar pago, é só digitar *Pix*._`
     );
