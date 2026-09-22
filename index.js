@@ -749,7 +749,7 @@ async function enviarMenu(message, nome) {
         `*4* 📸 - Nosso Instagram\n` +
         `*5* 🗑️ - Cancelar meu Agendamento\n` +
         `*6* 🕒 - Ver Horários Livres\n\n` + 
-        `_Dica: Se quiser deixar pago, é só digitar *Pix*._`
+        `_Dica: Se quiser deixar pago, é só digitar *Pix*(ao realizar, favor enviar o comprovante)_`
     );
 }
 
