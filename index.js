@@ -179,22 +179,37 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
     });
 }
 
-// NOVO: Função para extrair o número real forçando a leitura do contato
+// CORREÇÃO: Função melhorada para burlar o ID Oculto
 async function obterNumeroFormatado(message, chatId) {
     try {
         const contato = await message.getContact();
-        let num = contato.number; 
-        
-        if (!num) num = chatId.replace('@c.us', '').replace('@lid', '');
-        
+        let num = '';
+
+        // 1. Tenta pegar a raiz do número se vier como @c.us (telefone real)
+        if (chatId.includes('@c.us')) {
+            num = chatId.replace('@c.us', '');
+        } else if (contato && contato.number && !contato.id._serialized.includes('@lid')) {
+            num = contato.number;
+        } else {
+            num = contato.number || chatId.replace('@lid', '');
+        }
+
+        // 2. Reconhece seu número de Dono
         if (num === '179778875347010') return 'Você (Teste Admin)';
-        
-        if (num.startsWith('55') && num.length >= 12) {
+
+        // 3. Se for telefone do Brasil, formata bonitinho
+        if (num.startsWith('55') && num.length >= 12 && num.length <= 13) {
             const ddd = num.substring(2, 4);
             const corpo = num.substring(4);
             if (corpo.length === 9) return `(${ddd}) ${corpo.substring(0,5)}-${corpo.substring(5)}`;
             if (corpo.length === 8) return `(${ddd}) 9${corpo.substring(0,4)}-${corpo.substring(4)}`;
         }
+
+        // 4. Se o WhatsApp blindar e jogar um ID gigante que não começa com 55 (ex: Carlos)
+        if (num.length > 13 && !num.startsWith('55')) {
+            return `WhatsApp Web / ID Oculto (+${num})`;
+        }
+
         return `+${num}`;
     } catch (e) {
         return chatId.replace('@c.us', '').replace('@lid', '');
