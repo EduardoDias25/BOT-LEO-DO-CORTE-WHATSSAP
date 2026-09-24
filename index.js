@@ -179,43 +179,6 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
     });
 }
 
-// CORREÇÃO: Função melhorada para burlar o ID Oculto
-async function obterNumeroFormatado(message, chatId) {
-    try {
-        const contato = await message.getContact();
-        let num = '';
-
-        // 1. Tenta pegar a raiz do número se vier como @c.us (telefone real)
-        if (chatId.includes('@c.us')) {
-            num = chatId.replace('@c.us', '');
-        } else if (contato && contato.number && !contato.id._serialized.includes('@lid')) {
-            num = contato.number;
-        } else {
-            num = contato.number || chatId.replace('@lid', '');
-        }
-
-        // 2. Reconhece seu número de Dono
-        if (num === '179778875347010') return 'Você (Teste Admin)';
-
-        // 3. Se for telefone do Brasil, formata bonitinho
-        if (num.startsWith('55') && num.length >= 12 && num.length <= 13) {
-            const ddd = num.substring(2, 4);
-            const corpo = num.substring(4);
-            if (corpo.length === 9) return `(${ddd}) ${corpo.substring(0,5)}-${corpo.substring(5)}`;
-            if (corpo.length === 8) return `(${ddd}) 9${corpo.substring(0,4)}-${corpo.substring(4)}`;
-        }
-
-        // 4. Se o WhatsApp blindar e jogar um ID gigante que não começa com 55 (ex: Carlos)
-        if (num.length > 13 && !num.startsWith('55')) {
-            return `WhatsApp Web / ID Oculto (+${num})`;
-        }
-
-        return `+${num}`;
-    } catch (e) {
-        return chatId.replace('@c.us', '').replace('@lid', '');
-    }
-}
-
 client.on('ready', () => {
     console.log('🔴🔵 Sistema Leo bot online e Operacional 100%!');
 
@@ -301,7 +264,7 @@ client.on('message_create', async (message) => {
     const palavrasDespedida = ['obrigado', 'obrigada', 'valeu', 'vlw', 'adeus', 'tchau', 'ate', 'até', 'flw', 'falou', 'brigado'];
     const intencaoDespedida = palavrasDespedida.some(p => texto === p || texto.startsWith(p + ' ') || texto.endsWith(' ' + p));
     
-    if (intencaoDespedida && (!sessoes[chatId] || sessoes[chatId].etapa !== 'capturando_nome')) {
+    if (intencaoDespedida && (!sessoes[chatId] || sessoes[chatId].etapa !== 'capturando_nome' && sessoes[chatId].etapa !== 'capturando_numero')) {
         if (sessoes[chatId]) sessoes[chatId].etapa = 'inicio'; 
         return await message.reply('🔴 *Leo Du Corte* 🔵\n\nNós que agradecemos, meu parceiro! Qualquer coisa é só chamar. Tmj e até a próxima! ✂️🔥');
     }
@@ -311,8 +274,7 @@ client.on('message_create', async (message) => {
         sessoes[chatId].pausado = true; 
         await message.reply('👨‍💻 Entendi! Pausei meu sistema automático e já chamei o Leo. Logo ele te responde aqui mesmo.');
         try { 
-            const numAdminFormatado = await obterNumeroFormatado(message, chatId);
-            await client.sendMessage(NUMERO_ADMIN, `⚠️ *PRECISA DE ATENDIMENTO!*\n\nO contato ${numAdminFormatado} pediu ajuda e o bot se auto-pausou nessa conversa.`); 
+            await client.sendMessage(NUMERO_ADMIN, `⚠️ *PRECISA DE ATENDIMENTO!*\n\nO cliente pediu ajuda e o bot se auto-pausou nessa conversa.`); 
         } catch (e) {}
         return;
     }
@@ -501,8 +463,7 @@ client.on('message_create', async (message) => {
                 await message.reply('🗑️ *Horário Cancelado!*\n\nSua reserva foi removida. Digite *Oi* se quiser marcar uma nova data.');
                 if (sessoes[chatId]) sessoes[chatId].etapa = 'inicio';
                 try { 
-                    const numCancelFormatado = await obterNumeroFormatado(message, chatId);
-                    await client.sendMessage(NUMERO_ADMIN, `⚠️ *DESISTÊNCIA AUTÔNOMA*\nO contato ${numCancelFormatado} desmarcou o horário. Vaga liberada!`); 
+                    await client.sendMessage(NUMERO_ADMIN, `⚠️ *DESISTÊNCIA AUTÔNOMA*\nO cliente ${sessoes[chatId].nome} desmarcou o horário. Vaga liberada!`); 
                 } catch (e) {}
             });
         });
@@ -658,16 +619,11 @@ client.on('message_create', async (message) => {
             const horaArredondada = `${dataValidada.getHours()}h${dataValidada.getMinutes()===0?'00':dataValidada.getMinutes()}`;
             const dataString = `${dataValidada.getDate()}/${dataValidada.getMonth()+1} às ${horaArredondada}`;
 
-            db.run(`INSERT INTO agendamentos (telefone, nome, servico, data_hora, data_iso, data_fim_iso) VALUES (?, ?, ?, ?, ?, ?)`, 
-            [chatId, sessoes[chatId].nome, sessoes[chatId].servicoSelecionado.nome, dataString, dataValidada.toISOString(), dataFim.toISOString()], async (err) => {
-                if (err) return await message.reply('❌ Erro ao salvar no banco. Tente novamente.');
-                sessoes[chatId].etapa = 'menu';
-                await message.reply(`✅ *Sucesso, ${sessoes[chatId].nome}!*\n\nSeu horário para *${sessoes[chatId].servicoSelecionado.nome}* está garantido para *${dataString}*.\n\nVocê receberá lembretes automáticos.\n_(Se precisar desmarcar, digite *cancelar*)_`);
-                try {
-                    const numFormatado = await obterNumeroFormatado(message, chatId);
-                    await client.sendMessage(NUMERO_ADMIN, `🔔 *NOVO AGENDAMENTO!*\n\n👤 *Cliente:* ${sessoes[chatId].nome}\n📞 *Contato:* ${numFormatado}\n✂️ *Serviço:* ${sessoes[chatId].servicoSelecionado.nome}\n📅 *Data/Hora:* ${dataString}`);
-                } catch (e) {}
-            });
+            // NOVIDADE: Guarda a vaga na memória e pula para perguntar o número
+            sessoes[chatId].reservaTemp = { dataIso: dataValidada.toISOString(), dataFimIso: dataFim.toISOString(), dataString: dataString };
+            sessoes[chatId].etapa = 'capturando_numero';
+            await message.reply(`✅ *Horário Livre!*\n\nPara finalizar o agendamento, por favor, digite o seu **número de telefone/WhatsApp com DDD** (Ex: 31 99999-9999):`);
+
         } else {
             const dataSoDia = converterDataDia(texto);
             if (dataSoDia) {
@@ -713,16 +669,32 @@ client.on('message_create', async (message) => {
         const horaArredondada = `${dataValidada.getHours()}h${dataValidada.getMinutes()===0?'00':dataValidada.getMinutes()}`;
         const dataString = `${dataValidada.getDate()}/${dataValidada.getMonth()+1} às ${horaArredondada}`;
 
+        // NOVIDADE: Guarda a vaga na memória e pula para perguntar o número
+        sessoes[chatId].reservaTemp = { dataIso: dataValidada.toISOString(), dataFimIso: dataFim.toISOString(), dataString: dataString };
+        sessoes[chatId].etapa = 'capturando_numero';
+        await message.reply(`✅ *Horário Livre!*\n\nPara finalizar o agendamento, por favor, digite o seu **número de telefone/WhatsApp com DDD** (Ex: 31 99999-9999):`);
+    }
+    // NOVIDADE: A ETAPA FINAL QUE SALVA O NÚMERO E ENCERRA O AGENDAMENTO
+    else if (etapaAtual === 'capturando_numero') {
+        const numeroDigitado = message.body.trim();
+        const reserva = sessoes[chatId].reservaTemp;
+
+        if (!reserva) {
+            sessoes[chatId].etapa = 'menu';
+            return await message.reply('⚠️ Ocorreu um erro ao recuperar seu horário. Por favor, inicie novamente.');
+        }
+
+        // Continua gravando o chatId no banco para que o robô consiga mandar mensagem para o cliente (lembretes/cancelamentos)
         db.run(`INSERT INTO agendamentos (telefone, nome, servico, data_hora, data_iso, data_fim_iso) VALUES (?, ?, ?, ?, ?, ?)`, 
-        [chatId, sessoes[chatId].nome, sessoes[chatId].servicoSelecionado.nome, dataString, dataValidada.toISOString(), dataFim.toISOString()], async (err) => {
+        [chatId, sessoes[chatId].nome, sessoes[chatId].servicoSelecionado.nome, reserva.dataString, reserva.dataIso, reserva.dataFimIso], async (err) => {
             if (err) return await message.reply('❌ Erro ao salvar no banco. Tente novamente.');
             
             sessoes[chatId].etapa = 'menu';
-            await message.reply(`✅ *Sucesso, ${sessoes[chatId].nome}!*\n\nSeu horário para *${sessoes[chatId].servicoSelecionado.nome}* está garantido para *${dataString}*.\n\nVocê receberá lembretes automáticos.\n_(Se precisar desmarcar, digite *cancelar*)_`);
+            await message.reply(`✅ *Sucesso, ${sessoes[chatId].nome}!*\n\nSeu horário para *${sessoes[chatId].servicoSelecionado.nome}* está garantido para *${reserva.dataString}*.\n\nVocê receberá lembretes automáticos.\n_(Se precisar desmarcar, digite *cancelar*)_`);
             
             try {
-                const numFormatado = await obterNumeroFormatado(message, chatId);
-                await client.sendMessage(NUMERO_ADMIN, `🔔 *NOVO AGENDAMENTO!*\n\n👤 *Cliente:* ${sessoes[chatId].nome}\n📞 *Contato:* ${numFormatado}\n✂️ *Serviço:* ${sessoes[chatId].servicoSelecionado.nome}\n📅 *Data/Hora:* ${dataString}`);
+                // Aqui o bot manda a notificação com o número exato que a pessoa digitou!
+                await client.sendMessage(NUMERO_ADMIN, `🔔 *NOVO AGENDAMENTO!*\n\n👤 *Cliente:* ${sessoes[chatId].nome}\n📞 *Contato:* ${numeroDigitado}\n✂️ *Serviço:* ${sessoes[chatId].servicoSelecionado.nome}\n📅 *Data/Hora:* ${reserva.dataString}`);
             } catch (e) {}
         });
     }
