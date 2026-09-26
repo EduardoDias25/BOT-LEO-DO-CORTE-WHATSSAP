@@ -179,6 +179,38 @@ function verificarDisponibilidade(novaDataIso, novaDataFimIso) {
     });
 }
 
+async function obterNumeroFormatado(message, chatId) {
+    try {
+        const contato = await message.getContact();
+        let num = '';
+
+        if (chatId.includes('@c.us')) {
+            num = chatId.replace('@c.us', '');
+        } else if (contato && contato.number && !contato.id._serialized.includes('@lid')) {
+            num = contato.number;
+        } else {
+            num = contato.number || chatId.replace('@lid', '');
+        }
+
+        if (num === '179778875347010') return 'Você (Teste Admin)';
+
+        if (num.startsWith('55') && num.length >= 12 && num.length <= 13) {
+            const ddd = num.substring(2, 4);
+            const corpo = num.substring(4);
+            if (corpo.length === 9) return `(${ddd}) ${corpo.substring(0,5)}-${corpo.substring(5)}`;
+            if (corpo.length === 8) return `(${ddd}) 9${corpo.substring(0,4)}-${corpo.substring(4)}`;
+        }
+
+        if (num.length > 13 && !num.startsWith('55')) {
+            return `WhatsApp Web / ID Oculto (+${num})`;
+        }
+
+        return `+${num}`;
+    } catch (e) {
+        return chatId.replace('@c.us', '').replace('@lid', '');
+    }
+}
+
 client.on('ready', () => {
     console.log('🔴🔵 Sistema Leo bot online e Operacional 100%!');
 
@@ -226,7 +258,7 @@ client.on('ready', () => {
 // ==========================================
 
 client.on('message_create', async (message) => {
-    const texto = message.body.toLowerCase();
+    const texto = message.body ? message.body.toLowerCase() : '';
     
     if (message.fromMe) {
         const chatIdAlvo = message.to; 
@@ -261,6 +293,23 @@ client.on('message_create', async (message) => {
 
     if (sessoes[chatId] && sessoes[chatId].pausado) return; 
 
+    // NOVIDADE: RECEPÇÃO DE COMPROVANTE / MÍDIA
+    if (message.hasMedia && chatId !== NUMERO_ADMIN) {
+        if (!sessoes[chatId]) sessoes[chatId] = { etapa: 'inicio' };
+        
+        await message.reply('✅ Arquivo recebido! Se for o comprovante do Pix, eu já repassei pro Leo dar o confere. Tmj, meu parceiro! 🙏');
+        
+        try {
+            const media = await message.downloadMedia();
+            const numFormatado = await obterNumeroFormatado(message, chatId);
+            const nomeCli = sessoes[chatId].nome ? sessoes[chatId].nome : 'Cliente';
+            await client.sendMessage(NUMERO_ADMIN, `💸 *COMPROVANTE / ARQUIVO RECEBIDO*\n\n👤 *De:* ${nomeCli}\n📞 *Contato:* ${numFormatado}`, { media: media });
+        } catch (e) {
+            console.log('Erro ao baixar mídia do comprovante', e);
+        }
+        return;
+    }
+
     const palavrasDespedida = ['obrigado', 'obrigada', 'valeu', 'vlw', 'adeus', 'tchau', 'ate', 'até', 'flw', 'falou', 'brigado'];
     const intencaoDespedida = palavrasDespedida.some(p => texto === p || texto.startsWith(p + ' ') || texto.endsWith(' ' + p));
     
@@ -274,7 +323,8 @@ client.on('message_create', async (message) => {
         sessoes[chatId].pausado = true; 
         await message.reply('👨‍💻 Entendi! Pausei meu sistema automático e já chamei o Leo. Logo ele te responde aqui mesmo.');
         try { 
-            await client.sendMessage(NUMERO_ADMIN, `⚠️ *PRECISA DE ATENDIMENTO!*\n\nO cliente pediu ajuda e o bot se auto-pausou nessa conversa.`); 
+            const numAdminFormatado = await obterNumeroFormatado(message, chatId);
+            await client.sendMessage(NUMERO_ADMIN, `⚠️ *PRECISA DE ATENDIMENTO!*\n\nO contato ${numAdminFormatado} pediu ajuda e o bot se auto-pausou nessa conversa.`); 
         } catch (e) {}
         return;
     }
@@ -448,8 +498,44 @@ client.on('message_create', async (message) => {
         return await message.reply(`🔴 *Leo Du Corte* 🔵\n\nFala meu parceiro! Nossos produtos ficam expostos lá na barbearia.\n\nVocê pode colar aqui pra dar uma olhada e adquirir direto com a gente. Se preferir que entregue, basta solicitar um Uber Flash ou 99 Entrega pra retirar aqui, beleza? 🛵💨\n\n_(Digite *voltar* para o menu principal)_`);
     }
 
+    // NOVIDADE: A COBRANÇA DO COMPROVANTE AQUI
     if (texto === 'pix' || texto === 'pagar' || texto === 'pagamento') {
-        return await message.reply(`💸 *Área de Pagamento*\n\nNossa Chave Pix (Celular):\n*${CHAVE_PIX}*\nNome: ${NOME_PIX}\n\nObrigado pela preferência!`);
+        return await message.reply(`💸 *Área de Pagamento*\n\nNossa Chave Pix (Celular):\n*${CHAVE_PIX}*\nNome: ${NOME_PIX}\n\nAssim que realizar o pagamento, por gentileza, *mande a foto ou arquivo do comprovante aqui mesmo* para darmos baixa, beleza?\n\nMuito obrigado pela preferência! 🙏`);
+    }
+
+    const intencaoReagendar = texto.includes('reagendar') || texto.includes('mudar horario') || texto.includes('alterar horario');
+    if (intencaoReagendar) {
+        db.all(`SELECT id, servico, nome FROM agendamentos WHERE telefone = ?`, [chatId], async (err, rows) => {
+            if (err || rows.length === 0) {
+                if (sessoes[chatId]) sessoes[chatId].etapa = 'inicio';
+                return await message.reply('Você não tem nenhum horário marcado no momento para reagendar. Digite *Oi* para começar um novo agendamento.');
+            }
+            
+            const servicoAntigo = rows[0].servico;
+            const nomeAntigo = rows[0].nome;
+            let servicoObj = null;
+            
+            for (let key in SERVICOS) {
+                if (SERVICOS[key].nome === servicoAntigo) {
+                    servicoObj = SERVICOS[key];
+                }
+            }
+
+            db.run(`DELETE FROM agendamentos WHERE telefone = ?`, [chatId], async function(err) {
+                sessoes[chatId] = { 
+                    etapa: 'reagendando_dia', 
+                    nome: nomeAntigo,
+                    servicoSelecionado: servicoObj 
+                };
+                await message.reply(`🔄 *Reagendamento:*\n\nSeu horário anterior foi liberado da agenda para não dar conflito.\n\nPara reagendar o seu *${servicoAntigo}*, para qual dia você gostaria de ver nossos horários livres?\n_(Exemplo: amanhã, quinta, dia 15)_`);
+                
+                try { 
+                    const numCancelFormatado = await obterNumeroFormatado(message, chatId);
+                    await client.sendMessage(NUMERO_ADMIN, `⚠️ *REAGENDAMENTO*\nO cliente ${nomeAntigo} (${numCancelFormatado}) solicitou reagendamento e a vaga anterior dele foi liberada!`); 
+                } catch (e) {}
+            });
+        });
+        return;
     }
 
     const intencaoCancelar = texto.includes('cancelar') || texto.includes('desmarcar') || texto.includes('deu ruim') || texto === '5';
@@ -460,10 +546,11 @@ client.on('message_create', async (message) => {
                 return await message.reply('Não encontrei nenhum horário marcado no seu número para cancelar. Se precisar de algo, digite *Oi*.');
             }
             db.run(`DELETE FROM agendamentos WHERE telefone = ?`, [chatId], async function(err) {
-                await message.reply('🗑️ *Horário Cancelado!*\n\nSua reserva foi removida. Digite *Oi* se quiser marcar uma nova data.');
+                await message.reply('🗑️ *Horário Cancelado!*\n\nSua reserva foi removida. Digite *Oi* se quiser marcar uma nova data no futuro.');
                 if (sessoes[chatId]) sessoes[chatId].etapa = 'inicio';
                 try { 
-                    await client.sendMessage(NUMERO_ADMIN, `⚠️ *DESISTÊNCIA AUTÔNOMA*\nO cliente ${sessoes[chatId].nome} desmarcou o horário. Vaga liberada!`); 
+                    const numCancelFormatado = await obterNumeroFormatado(message, chatId);
+                    await client.sendMessage(NUMERO_ADMIN, `⚠️ *DESISTÊNCIA AUTÔNOMA*\nO contato ${numCancelFormatado} desmarcou o horário. Vaga liberada!`); 
                 } catch (e) {}
             });
         });
@@ -599,6 +686,54 @@ client.on('message_create', async (message) => {
             await message.reply('⚠️ Por favor, escolha um número válido da lista.');
         }
     }
+    else if (etapaAtual === 'reagendando_dia') {
+        const dataAlvo = converterDataDia(texto);
+        if (!dataAlvo) return await message.reply('⚠️ Não consegui entender a data. Tente algo como "amanhã", "quinta", ou "dia 25".');
+
+        const horarioFunc = obterHorarioFuncionamento(dataAlvo);
+        const dataString = `${dataAlvo.getDate()}/${dataAlvo.getMonth()+1}`;
+
+        if (!horarioFunc) {
+            return await message.reply(`📅 Nós não abrimos no dia ${dataString} (Domingo/Segunda). 😕\nDigite outra data para reagendar:`);
+        }
+
+        const inicioDia = new Date(dataAlvo.getFullYear(), dataAlvo.getMonth(), dataAlvo.getDate(), 0, 0, 0).toISOString();
+        const fimDia = new Date(dataAlvo.getFullYear(), dataAlvo.getMonth(), dataAlvo.getDate(), 23, 59, 59).toISOString();
+
+        db.all("SELECT * FROM agendamentos WHERE data_iso >= ? AND data_iso <= ?", [inicioDia, fimDia], async (err, rows) => {
+            const horariosPossiveis = [];
+            for(let h = horarioFunc.inicio; h < horarioFunc.fim; h++) {
+                if (h === 12) continue; 
+                horariosPossiveis.push(`${h.toString().padStart(2, '0')}:00`);
+                horariosPossiveis.push(`${h.toString().padStart(2, '0')}:30`);
+            }
+            
+            const duracaoNecessaria = sessoes[chatId].servicoSelecionado.duracao;
+
+            const livres = horariosPossiveis.filter(horaStr => {
+                const [h, m] = horaStr.split(':').map(Number);
+                const dataTest = new Date(dataAlvo.getFullYear(), dataAlvo.getMonth(), dataAlvo.getDate(), h, m, 0);
+                const dataTestFim = new Date(dataTest.getTime() + duracaoNecessaria * 60000); 
+                
+                for (let row of rows) {
+                    const rowInicio = new Date(row.data_iso);
+                    const rowFim = new Date(row.data_fim_iso);
+                    if ((dataTest < rowFim && dataTestFim > rowInicio) || (dataTest >= rowInicio && dataTest < rowFim)) return false; 
+                }
+                if (dataTest < new Date()) return false;
+                return true;
+            });
+
+            if (livres.length === 0) {
+                await message.reply(`📅 A nossa agenda está lotada para o dia ${dataString}. 😕\nPara qual outro dia você quer reagendar?`);
+            } else {
+                let listaTexto = livres.join(' | ');
+                sessoes[chatId].dataTemporaria = dataAlvo;
+                sessoes[chatId].etapa = 'escolhendo_apenas_hora'; 
+                await message.reply(`📅 *Horários Livres - ${dataString}*\n\nEstes são os horários disponíveis para fazer seu ${sessoes[chatId].servicoSelecionado.nome}:\n\n🕒 ${listaTexto}\n\n*Qual horário* você prefere? (Ex: 14h, 15:30)`);
+            }
+        });
+    }
     else if (etapaAtual === 'escolhendo_horario') {
         const dataValidada = converterData(texto);
         
@@ -619,7 +754,6 @@ client.on('message_create', async (message) => {
             const horaArredondada = `${dataValidada.getHours()}h${dataValidada.getMinutes()===0?'00':dataValidada.getMinutes()}`;
             const dataString = `${dataValidada.getDate()}/${dataValidada.getMonth()+1} às ${horaArredondada}`;
 
-            // NOVIDADE: Guarda a vaga na memória e pula para perguntar o número
             sessoes[chatId].reservaTemp = { dataIso: dataValidada.toISOString(), dataFimIso: dataFim.toISOString(), dataString: dataString };
             sessoes[chatId].etapa = 'capturando_numero';
             await message.reply(`✅ *Horário Livre!*\n\nPara finalizar o agendamento, por favor, digite o seu **número de telefone/WhatsApp com DDD** (Ex: 31 99999-9999):`);
@@ -669,12 +803,10 @@ client.on('message_create', async (message) => {
         const horaArredondada = `${dataValidada.getHours()}h${dataValidada.getMinutes()===0?'00':dataValidada.getMinutes()}`;
         const dataString = `${dataValidada.getDate()}/${dataValidada.getMonth()+1} às ${horaArredondada}`;
 
-        // NOVIDADE: Guarda a vaga na memória e pula para perguntar o número
         sessoes[chatId].reservaTemp = { dataIso: dataValidada.toISOString(), dataFimIso: dataFim.toISOString(), dataString: dataString };
         sessoes[chatId].etapa = 'capturando_numero';
-        await message.reply(`✅ *Horário Livre!*\n\nPara finalizar o agendamento, por favor, digite o seu **número de telefone/WhatsApp com DDD** (Ex: 31 99999-9999):`);
+        await message.reply(`✅ *Horário Livre!*\n\nPara finalizar, por favor, digite o seu **número de telefone/WhatsApp com DDD** (Ex: 31 99999-9999):`);
     }
-    // NOVIDADE: A ETAPA FINAL QUE SALVA O NÚMERO E ENCERRA O AGENDAMENTO
     else if (etapaAtual === 'capturando_numero') {
         const numeroDigitado = message.body.trim();
         const reserva = sessoes[chatId].reservaTemp;
@@ -684,16 +816,14 @@ client.on('message_create', async (message) => {
             return await message.reply('⚠️ Ocorreu um erro ao recuperar seu horário. Por favor, inicie novamente.');
         }
 
-        // Continua gravando o chatId no banco para que o robô consiga mandar mensagem para o cliente (lembretes/cancelamentos)
         db.run(`INSERT INTO agendamentos (telefone, nome, servico, data_hora, data_iso, data_fim_iso) VALUES (?, ?, ?, ?, ?, ?)`, 
         [chatId, sessoes[chatId].nome, sessoes[chatId].servicoSelecionado.nome, reserva.dataString, reserva.dataIso, reserva.dataFimIso], async (err) => {
             if (err) return await message.reply('❌ Erro ao salvar no banco. Tente novamente.');
             
             sessoes[chatId].etapa = 'menu';
-            await message.reply(`✅ *Sucesso, ${sessoes[chatId].nome}!*\n\nSeu horário para *${sessoes[chatId].servicoSelecionado.nome}* está garantido para *${reserva.dataString}*.\n\nVocê receberá lembretes automáticos.\n_(Se precisar desmarcar, digite *cancelar*)_`);
+            await message.reply(`✅ *Sucesso, ${sessoes[chatId].nome}!*\n\nSeu horário para *${sessoes[chatId].servicoSelecionado.nome}* está garantido para *${reserva.dataString}*.\n\nVocê receberá lembretes automáticos.\n_(Se precisar alterar algo, digite *cancelar* ou *reagendar*)_`);
             
             try {
-                // Aqui o bot manda a notificação com o número exato que a pessoa digitou!
                 await client.sendMessage(NUMERO_ADMIN, `🔔 *NOVO AGENDAMENTO!*\n\n👤 *Cliente:* ${sessoes[chatId].nome}\n📞 *Contato:* ${numeroDigitado}\n✂️ *Serviço:* ${sessoes[chatId].servicoSelecionado.nome}\n📅 *Data/Hora:* ${reserva.dataString}`);
             } catch (e) {}
         });
@@ -752,7 +882,7 @@ async function enviarMenu(message, nome) {
         `*2* 💰 - Ver Tabela de Preços\n` +
         `*3* 📍 - Nossa Localização\n` +
         `*4* 📸 - Nosso Instagram\n` +
-        `*5* 🗑️ - Cancelar meu Agendamento\n` +
+        `*5* 🗑️ - Cancelar ou Reagendar\n` +
         `*6* 🕒 - Ver Horários Livres\n\n` + 
         `_Dica: Se quiser deixar pago, é só digitar *Pix*._`
     );
